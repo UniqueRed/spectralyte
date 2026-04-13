@@ -533,3 +533,51 @@ class AuditReport:
             json.dump(data, f, indent=2)
 
         print(f"Audit results exported to {path}")
+
+# ── Plot ───────────────────────────────────────────────────────────────────
+
+    def plot(
+        self,
+        backend: Literal["matplotlib", "plotly"] = "matplotlib",
+        show: bool = True,
+        save_dir: Optional[str] = None,
+    ) -> dict:
+        """
+        Visualize all five audit metrics.
+
+        Parameters
+        ----------
+        backend : str
+            'matplotlib' for static plots — default, library use, works in
+            notebooks and scripts with no extra dependencies.
+            'plotly' for interactive plots — web/desktop app use, produces
+            HTML with hover tooltips and zoom.
+        show : bool
+            If True, display plots immediately. Default True.
+            Set to False when saving without displaying.
+        save_dir : Optional[str]
+            If provided, save all figures to this directory.
+            Matplotlib saves as .png, Plotly saves as .html.
+
+        Returns
+        -------
+        dict
+            Dictionary mapping metric name to figure object.
+            Keys: 'summary', 'anisotropy', 'dimensionality',
+                  'density', 'sensitivity', 'intrinsic_dim'
+
+        Example
+        -------
+        >>> report.plot()
+        >>> report.plot(backend='plotly', save_dir='./audit_plots')
+        """
+        if backend == "matplotlib":
+            from spectralyte.visualization.plots_matplotlib import plot_all
+        elif backend == "plotly":
+            from spectralyte.visualization.plots_plotly import plot_all
+        else:
+            raise ValueError(
+                f"Unknown backend '{backend}'. "
+                f"Choose 'matplotlib' or 'plotly'."
+            )
+        return plot_all(self, show=show, save_dir=save_dir)
