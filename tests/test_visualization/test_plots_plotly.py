@@ -1,5 +1,5 @@
 """
-tests/test_visualization/test_plots.py
+tests/test_visualization/test_plots_plotly.py
 ========================================
 Tests for the Spectralyte visualization layer.
 
@@ -13,6 +13,7 @@ Since these tests run in a headless environment we test that:
 
 import numpy as np
 import pytest
+plotly = pytest.importorskip("plotly", reason="plotly not installed")
 import tempfile
 import os
 
