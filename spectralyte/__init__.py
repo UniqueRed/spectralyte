@@ -24,6 +24,6 @@ from spectralyte.core.auditor import Spectralyte
 from spectralyte.core.report import AuditReport
 from spectralyte.core.router import Router
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __author__ = "Adhviklal Thoppe"
 __all__ = ["Spectralyte", "AuditReport", "Router"]
