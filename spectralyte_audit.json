@@ -1,0 +1,48 @@
+{
+  "embeddings_shape": [
+    500,
+    384
+  ],
+  "n_issues": 0,
+  "needs_transform": false,
+  "has_brittle_zones": false,
+  "anisotropy": {
+    "score": 0.06248083338141441,
+    "interpretation": "healthy",
+    "n_vectors": 500,
+    "n_dims": 384,
+    "sampled": false
+  },
+  "dimensionality": {
+    "effective_dims": 183,
+    "nominal_dims": 384,
+    "utilization": 0.4765625,
+    "participation_ratio": 91.8994369506836,
+    "variance_threshold": 0.95,
+    "interpretation": "healthy"
+  },
+  "density": {
+    "cv": 0.05804117684701146,
+    "mean_knn_distance": 1.1874668492309184,
+    "std_knn_distance": 0.06892197339617523,
+    "n_outliers": 0,
+    "interpretation": "uniform",
+    "k": 10
+  },
+  "sensitivity": {
+    "mean_stability": 0.9528565656565656,
+    "n_brittle": 0,
+    "brittle_fraction": 0.0,
+    "epsilon_used": 0.05937334246154592,
+    "interpretation": "stable",
+    "k": 10,
+    "m": 5
+  },
+  "intrinsic_dim": {
+    "d_int": 8.247970832907923,
+    "r_squared": 0.8879145275158595,
+    "interpretation": "low",
+    "trim_fraction": 0.1,
+    "n_points_used": 450
+  }
+}
