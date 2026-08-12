@@ -111,9 +111,7 @@ fixed = audit.transform(embeddings, strategy="abtt", abtt_k=3)
 fixed = audit.transform(embeddings, strategy="pca_reduce")
 
 # Re-audit to verify improvement
-audit_fixed = Spectralyte(fixed)
-report_fixed = audit_fixed.run()
-report_fixed._pre_transform_report = report
+report_fixed = audit.run(fixed)
 report_fixed.compare()
 ```
 
