@@ -185,6 +185,87 @@ Fix: Switch to Maximum Marginal Relevance (MMR) retrieval.
 
 ---
 
+## CLI
+
+Spectralyte ships a command-line interface for auditing embeddings without writing any Python.
+
+### Audit
+
+```bash
+# Human-readable summary
+spectralyte audit my_embeddings.npy
+
+# Structured JSON — pipe to jq, CI gates, the TUI, or the MCP server
+spectralyte audit my_embeddings.npy --json
+
+# Override configuration
+spectralyte audit my_embeddings.npy --config k=10 variance_threshold=0.90
+```
+
+```
+Spectralyte Audit Report
+════════════════════════════════════════════════════
+  Embeddings: 500 vectors × 384 dims
+────────────────────────────────────────────────────
+  Anisotropy Score       0.062   ✓  HEALTHY
+  Effective Dimensions   183 / 384  (47.7%)   ✓  HEALTHY
+  Density CV             0.058   ✓  UNIFORM
+  Retrieval Stability    0.953   ✓  STABLE
+  Intrinsic Dimension    8.2   (R²=0.888)   ✓  LOW
+════════════════════════════════════════════════════
+  ✓ No issues detected. Embedding space looks healthy.
+```
+
+### Remediation plan
+
+```bash
+spectralyte fix-plan my_embeddings.npy
+spectralyte fix-plan my_embeddings.npy --framework langchain
+spectralyte fix-plan my_embeddings.npy --framework llamaindex
+```
+
+### Transform
+
+```bash
+# Fix anisotropy — saves corrected embeddings to fixed.npy
+spectralyte transform my_embeddings.npy --strategy whiten --output fixed.npy
+
+# All-but-the-Top
+spectralyte transform my_embeddings.npy --strategy abtt --output fixed.npy
+
+# Reduce to effective dimensionality
+spectralyte transform my_embeddings.npy --strategy pca_reduce --output reduced.npy
+```
+
+### JSON output
+
+The `--json` flag emits the same schema as `report.export()`, making it composable with downstream tooling:
+
+```bash
+# Pipe into jq
+spectralyte audit embeddings.npy --json | jq '.anisotropy.score'
+
+# Save to file
+spectralyte audit embeddings.npy --json > audit.json
+
+# CI gate: fail if issues detected
+spectralyte audit embeddings.npy --json | python -c "
+import sys, json
+data = json.load(sys.stdin)
+if data['n_issues'] > 0:
+    print(f\"{data['n_issues']} geometry issues detected\")
+    sys.exit(1)
+"
+```
+
+### Version
+
+```bash
+spectralyte version
+```
+
+---
+
 ## Individual Metrics
 
 Each metric is independently importable.
@@ -304,7 +385,7 @@ Model comparison output:
 - [ ] LangChain native integration
 - [ ] LlamaIndex native integration
 - [ ] Pinecone / Qdrant / Weaviate connectors
-- [ ] CLI entrypoint (`spectralyte audit embeddings.npy`)
+- [x] CLI entrypoint (`spectralyte audit embeddings.npy`)
 - [ ] SpectralytePipeline build-time validation gate
 
 ---
