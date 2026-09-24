@@ -238,43 +238,69 @@ def test_save_creates_directory_if_needed(report):
 
 # ── Helper function tests ──────────────────────────────────────────────────────
 
+class _Res:
+    """Minimal stand-in for a metric result dataclass."""
+
+    def __init__(self, metric, interpretation):
+        self.METRIC = metric
+        self.interpretation = interpretation
+
+
 def test_severity_color_healthy():
-    """Healthy interpretations map to green."""
-    assert _severity_color("healthy") == "#16A34A"
-    assert _severity_color("uniform") == "#16A34A"
-    assert _severity_color("stable") == "#16A34A"
-    assert _severity_color("low") == "#16A34A"
+    """Each metric's own healthy label maps to green."""
+    assert _severity_color(_Res("anisotropy", "healthy")) == "#16A34A"
+    assert _severity_color(_Res("density", "uniform")) == "#16A34A"
+    assert _severity_color(_Res("sensitivity", "stable")) == "#16A34A"
+    assert _severity_color(_Res("dimensionality", "healthy")) == "#16A34A"
 
 
 def test_severity_color_moderate():
     """Moderate maps to amber."""
-    assert _severity_color("moderate") == "#D97706"
+    assert _severity_color(_Res("anisotropy", "moderate")) == "#D97706"
 
 
 def test_severity_color_severe():
     """Severe and other bad states map to red."""
-    assert _severity_color("severe") == "#DC2626"
-    assert _severity_color("clustered") == "#DC2626"
-    assert _severity_color("brittle") == "#DC2626"
-    assert _severity_color("critical") == "#DC2626"
+    assert _severity_color(_Res("anisotropy", "severe")) == "#DC2626"
+    assert _severity_color(_Res("density", "clustered")) == "#DC2626"
+    assert _severity_color(_Res("sensitivity", "brittle")) == "#DC2626"
+    assert _severity_color(_Res("dimensionality", "critical")) == "#DC2626"
+
+
+def test_severity_color_low_is_metric_dependent():
+    """
+    Regression: "low" is emitted by two metrics and is unhealthy for both.
+
+    It previously sat in a shared "healthy" set, painting a collapsed manifold
+    and an under-utilized space green.
+    """
+    assert _severity_color(_Res("dimensionality", "low")) == "#DC2626"
+    assert _severity_color(_Res("intrinsic_dim", "low")) == "#DC2626"
+
+
+def test_severity_color_intrinsic_dim_polarity_inverted():
+    """Regression: high intrinsic dimensionality is healthy, not a failure."""
+    assert _severity_color(_Res("intrinsic_dim", "very_high")) == "#16A34A"
+    assert _severity_color(_Res("intrinsic_dim", "high")) == "#16A34A"
+    assert _severity_color(_Res("intrinsic_dim", "moderate")) == "#16A34A"
 
 
 def test_severity_label_contains_interpretation():
     """Severity label should contain the interpretation string."""
-    label = _severity_label("healthy")
+    label = _severity_label(_Res("anisotropy", "healthy"))
     assert "HEALTHY" in label
     assert "✓" in label
 
 
 def test_severity_label_severe_has_x():
     """Severe label should have ✗ icon."""
-    label = _severity_label("severe")
+    label = _severity_label(_Res("anisotropy", "severe"))
     assert "✗" in label
 
 
 def test_severity_label_moderate_has_warning():
     """Moderate label should have ⚠ icon."""
-    label = _severity_label("moderate")
+    label = _severity_label(_Res("anisotropy", "moderate"))
     assert "⚠" in label
 
 

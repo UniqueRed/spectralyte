@@ -28,6 +28,9 @@ if TYPE_CHECKING:
     from spectralyte.core.report import AuditReport
 
 # Colors — consistent with Spectralyte brand
+from spectralyte.core import severity
+
+
 _C = {
     "navy":   "#0F2744",
     "blue":   "#1A5FA8",
@@ -43,16 +46,21 @@ _C = {
     "bg":     "#F8FAFC",
 }
 
-def _severity_color(interpretation: str) -> str:
-    """Map interpretation string to a hex color."""
-    healthy = {"healthy", "uniform", "stable", "low"}
-    moderate = {"moderate"}
-    if interpretation in healthy:
-        return _C["green"]
-    elif interpretation in moderate:
-        return _C["amber"]
-    else:
-        return _C["red"]
+_SEVERITY_HEX = {
+    severity.OK:   _C["green"],
+    severity.WARN: _C["amber"],
+    severity.BAD:  _C["red"],
+}
+
+
+def _color_for_severity(level: str) -> str:
+    """Hex color for an already-resolved severity level."""
+    return _SEVERITY_HEX[level]
+
+
+def _severity_color(result) -> str:
+    """Hex color for a metric result, graded against its own metric."""
+    return _color_for_severity(severity.severity(result))
 
 
 def _require_plotly():
@@ -96,7 +104,7 @@ def plot_anisotropy(report: "AuditReport", show: bool = True, save_path: Optiona
     evs = eigenvalues[:n_show]
     indices = list(range(1, n_show + 1))
 
-    color = _severity_color(result.interpretation)
+    color = _severity_color(result)
 
     fig = go.Figure()
 
@@ -185,7 +193,7 @@ def plot_dimensionality(report: "AuditReport", show: bool = True, save_path: Opt
     evr = result.explained_variance_ratio
     n_components = len(cum_var)
     x = list(range(1, n_components + 1))
-    color = _severity_color(result.interpretation)
+    color = _severity_color(result)
 
     fig = make_subplots(
         rows=1, cols=2,
@@ -280,7 +288,7 @@ def plot_density(report: "AuditReport", show: bool = True, save_path: Optional[s
     import numpy as np
 
     result = report.density
-    color = _severity_color(result.interpretation)
+    color = _severity_color(result)
 
     fig = make_subplots(
         rows=1, cols=2,
@@ -377,7 +385,7 @@ def plot_sensitivity(report: "AuditReport", show: bool = True, save_path: Option
     go, _ = _require_plotly()
 
     result = report.sensitivity
-    color = _severity_color(result.interpretation)
+    color = _severity_color(result)
     scores = list(result.stability_per_embedding)
 
     fig = go.Figure()
@@ -487,7 +495,7 @@ def plot_intrinsic_dim(report: "AuditReport", show: bool = True, save_path: Opti
     import numpy as np
 
     result = report.intrinsic_dim
-    color = _severity_color(result.interpretation)
+    color = _severity_color(result)
 
     log_mu = list(result.log_mu)
     log_surv = list(result.log_survival)
@@ -624,10 +632,10 @@ def plot_summary(report: "AuditReport", show: bool = True, save_path: Optional[s
     radar_values = health_scores + [health_scores[0]]
 
     overall_health = float(np.mean(health_scores))
-    radar_color = _severity_color(
-        "healthy" if overall_health > 0.7
-        else "moderate" if overall_health > 0.4
-        else "severe"
+    radar_color = _color_for_severity(
+        severity.OK if overall_health > 0.7
+        else severity.WARN if overall_health > 0.4
+        else severity.BAD
     )
 
     fig.add_trace(go.Scatterpolar(
@@ -659,16 +667,16 @@ def plot_summary(report: "AuditReport", show: bool = True, save_path: Optional[s
 
     # ── Score cards table ──────────────────────────────────────────────────────
     metrics = [
-        ("Anisotropy", f"{report.anisotropy.score:.3f}", report.anisotropy.interpretation),
-        ("Effective Dims", f"{report.dimensionality.effective_dims}/{report.dimensionality.nominal_dims} ({report.dimensionality.utilization:.1%})", report.dimensionality.interpretation),
-        ("Density CV", f"{report.density.cv:.3f}", report.density.interpretation),
-        ("RSI Stability", f"{report.sensitivity.mean_stability:.3f}", report.sensitivity.interpretation),
-        ("Intrinsic Dim", f"{report.intrinsic_dim.d_int:.1f} (R²={report.intrinsic_dim.r_squared:.2f})", report.intrinsic_dim.interpretation),
+        ("Anisotropy", f"{report.anisotropy.score:.3f}", report.anisotropy),
+        ("Effective Dims", f"{report.dimensionality.effective_dims}/{report.dimensionality.nominal_dims} ({report.dimensionality.utilization:.1%})", report.dimensionality),
+        ("Density CV", f"{report.density.cv:.3f}", report.density),
+        ("RSI Stability", f"{report.sensitivity.mean_stability:.3f}", report.sensitivity),
+        ("Intrinsic Dim", f"{report.intrinsic_dim.d_int:.1f} (R²={report.intrinsic_dim.r_squared:.2f})", report.intrinsic_dim),
     ]
 
     metric_names = [m[0] for m in metrics]
     metric_values = [m[1] for m in metrics]
-    metric_interps = [m[2].upper() for m in metrics]
+    metric_interps = [m[2].interpretation.upper() for m in metrics]
     metric_colors = [_severity_color(m[2]) for m in metrics]
 
     fig.add_trace(go.Table(

@@ -48,7 +48,7 @@ from __future__ import annotations
 
 import numpy as np
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import ClassVar, Optional, Tuple
 from scipy.spatial import cKDTree
 from scipy.stats import linregress
 
@@ -92,6 +92,10 @@ class IntrinsicDimResult:
     normalized : bool
         True if embeddings were L2-normalized before distance computation.
     """
+
+    #: Metric identity, used by spectralyte.core.severity to grade
+    #: this result. Not a dataclass field.
+    METRIC: ClassVar[str] = "intrinsic_dim"
 
     d_int: float
     r_squared: float

@@ -23,6 +23,9 @@ from spectralyte.metrics.intrinsic_dim import IntrinsicDimResult
 
 # ── Severity color codes for terminal output ───────────────────────────────────
 
+from spectralyte.core import severity
+
+
 _COLORS = {
     "green":  "\033[92m",
     "yellow": "\033[93m",
@@ -36,22 +39,18 @@ def _colorize(text: str, color: str) -> str:
     return f"{_COLORS.get(color, '')}{text}{_COLORS['reset']}"
 
 
-def _severity_color(interpretation: str) -> str:
-    if interpretation in {"healthy", "uniform", "stable", "low"}:
-        return "green"
-    elif interpretation in {"moderate"}:
-        return "yellow"
-    else:
-        return "red"
+_SEVERITY_COLORS = {severity.OK: "green", severity.WARN: "yellow", severity.BAD: "red"}
+_SEVERITY_ICONS = {severity.OK: "✓", severity.WARN: "⚠", severity.BAD: "✗"}
 
 
-def _severity_icon(interpretation: str) -> str:
-    if interpretation in {"healthy", "uniform", "stable", "low"}:
-        return "✓"
-    elif interpretation in {"moderate"}:
-        return "⚠"
-    else:
-        return "✗"
+def _severity_color(result) -> str:
+    """Terminal color for a metric result, graded against its own metric."""
+    return _SEVERITY_COLORS[severity.severity(result)]
+
+
+def _severity_icon(result) -> str:
+    """Status icon for a metric result, graded against its own metric."""
+    return _SEVERITY_ICONS[severity.severity(result)]
 
 
 # ── AuditReport ────────────────────────────────────────────────────────────────
@@ -97,16 +96,18 @@ class AuditReport:
 
     @property
     def n_issues(self) -> int:
-        """Number of metrics with non-healthy/non-stable interpretation."""
-        healthy = {"healthy", "uniform", "stable", "low"}
-        interpretations = [
-            self.anisotropy.interpretation,
-            self.dimensionality.interpretation,
-            self.density.interpretation,
-            self.sensitivity.interpretation,
-            self.intrinsic_dim.interpretation,
-        ]
-        return sum(1 for i in interpretations if i not in healthy)
+        """
+        Number of metrics whose interpretation is not healthy for that metric.
+
+        Each result is graded against its own metric's polarity (see
+        :mod:`spectralyte.core.severity`) — the labels are not comparable
+        across metrics.
+        """
+        return sum(
+            1
+            for name in severity.METRIC_NAMES
+            if not severity.is_healthy(getattr(self, name))
+        )
 
     @property
     def needs_transform(self) -> bool:
@@ -159,8 +160,8 @@ class AuditReport:
 
         # ── Anisotropy ─────────────────────────────────────────────────────────
         a = self.anisotropy
-        color = _severity_color(a.interpretation)
-        icon = _severity_icon(a.interpretation)
+        color = _severity_color(a)
+        icon = _severity_icon(a)
         lines.append(
             f"  Anisotropy Score       "
             f"{fmt(f'{a.score:.3f}', color)}"
@@ -169,8 +170,8 @@ class AuditReport:
 
         # ── Effective dimensionality ───────────────────────────────────────────
         dm = self.dimensionality
-        color = _severity_color(dm.interpretation)
-        icon = _severity_icon(dm.interpretation)
+        color = _severity_color(dm)
+        icon = _severity_icon(dm)
         lines.append(
             f"  Effective Dimensions   "
             f"{fmt(f'{dm.effective_dims} / {dm.nominal_dims}', color)}"
@@ -180,8 +181,8 @@ class AuditReport:
 
         # ── Density ────────────────────────────────────────────────────────────
         den = self.density
-        color = _severity_color(den.interpretation)
-        icon = _severity_icon(den.interpretation)
+        color = _severity_color(den)
+        icon = _severity_icon(den)
         lines.append(
             f"  Density CV             "
             f"{fmt(f'{den.cv:.3f}', color)}"
@@ -190,8 +191,8 @@ class AuditReport:
 
         # ── Sensitivity ────────────────────────────────────────────────────────
         s = self.sensitivity
-        color = _severity_color(s.interpretation)
-        icon = _severity_icon(s.interpretation)
+        color = _severity_color(s)
+        icon = _severity_icon(s)
         lines.append(
             f"  Retrieval Stability    "
             f"{fmt(f'{s.mean_stability:.3f}', color)}"
@@ -205,8 +206,8 @@ class AuditReport:
 
         # ── Intrinsic dimensionality ───────────────────────────────────────────
         id_ = self.intrinsic_dim
-        color = _severity_color(id_.interpretation)
-        icon = _severity_icon(id_.interpretation)
+        color = _severity_color(id_)
+        icon = _severity_icon(id_)
         lines.append(
             f"  Intrinsic Dimension    "
             f"{fmt(f'{id_.d_int:.1f}', color)}"

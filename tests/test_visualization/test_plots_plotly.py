@@ -227,20 +227,40 @@ def test_hex_to_rgb_without_hash():
     assert result == "255, 0, 0"
 
 
+class _Res:
+    """Minimal stand-in for a metric result dataclass."""
+
+    def __init__(self, metric, interpretation):
+        self.METRIC = metric
+        self.interpretation = interpretation
+
+
 def test_severity_color_healthy():
-    """Healthy interpretations should return green."""
-    assert _severity_color("healthy") == "#16A34A"
-    assert _severity_color("uniform") == "#16A34A"
-    assert _severity_color("stable") == "#16A34A"
+    """Each metric's own healthy label should return green."""
+    assert _severity_color(_Res("anisotropy", "healthy")) == "#16A34A"
+    assert _severity_color(_Res("density", "uniform")) == "#16A34A"
+    assert _severity_color(_Res("sensitivity", "stable")) == "#16A34A"
 
 
 def test_severity_color_moderate():
     """Moderate interpretation should return amber."""
-    assert _severity_color("moderate") == "#D97706"
+    assert _severity_color(_Res("anisotropy", "moderate")) == "#D97706"
 
 
 def test_severity_color_severe():
     """Non-healthy, non-moderate interpretations should return red."""
-    assert _severity_color("severe") == "#DC2626"
-    assert _severity_color("clustered") == "#DC2626"
-    assert _severity_color("brittle") == "#DC2626"
+    assert _severity_color(_Res("anisotropy", "severe")) == "#DC2626"
+    assert _severity_color(_Res("density", "clustered")) == "#DC2626"
+    assert _severity_color(_Res("sensitivity", "brittle")) == "#DC2626"
+
+
+def test_severity_color_low_is_metric_dependent():
+    """Regression: 'low' is unhealthy for both metrics that emit it."""
+    assert _severity_color(_Res("dimensionality", "low")) == "#DC2626"
+    assert _severity_color(_Res("intrinsic_dim", "low")) == "#DC2626"
+
+
+def test_severity_color_intrinsic_dim_polarity_inverted():
+    """Regression: high intrinsic dimensionality is healthy, not a failure."""
+    assert _severity_color(_Res("intrinsic_dim", "very_high")) == "#16A34A"
+    assert _severity_color(_Res("intrinsic_dim", "high")) == "#16A34A"

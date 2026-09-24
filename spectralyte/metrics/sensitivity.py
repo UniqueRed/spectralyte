@@ -42,7 +42,7 @@ from __future__ import annotations
 
 import numpy as np
 from dataclasses import dataclass, field
-from typing import Optional, Set
+from typing import ClassVar, Optional, Set
 from scipy.spatial import cKDTree
 
 
@@ -91,6 +91,10 @@ class SensitivityResult:
     sampled : bool
         True if RSI was computed on a sample rather than the full index.
     """
+
+    #: Metric identity, used by spectralyte.core.severity to grade
+    #: this result. Not a dataclass field.
+    METRIC: ClassVar[str] = "sensitivity"
 
     mean_stability: float
     stability_per_embedding: np.ndarray = field(repr=False)

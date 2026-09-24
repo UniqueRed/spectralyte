@@ -38,7 +38,7 @@ from __future__ import annotations
 
 import numpy as np
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import ClassVar, Optional
 from sklearn.decomposition import TruncatedSVD
 
 
@@ -74,6 +74,10 @@ class DimensionalityResult:
     truncated : bool
         True if TruncatedSVD was used (large input) rather than full SVD.
     """
+
+    #: Metric identity, used by spectralyte.core.severity to grade
+    #: this result. Not a dataclass field.
+    METRIC: ClassVar[str] = "dimensionality"
 
     effective_dims: int
     nominal_dims: int

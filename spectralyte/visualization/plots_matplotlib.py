@@ -21,6 +21,8 @@ Six figures:
 from __future__ import annotations
 
 import numpy as np
+
+from spectralyte.core import severity
 from typing import Optional, Tuple, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -64,26 +66,21 @@ _STYLE = {
 }
 
 
-def _severity_color(interpretation: str) -> str:
-    """Map interpretation to hex color."""
-    healthy = {"healthy", "uniform", "stable", "low"}
-    moderate = {"moderate"}
-    if interpretation in healthy:
-        return _C["green"]
-    elif interpretation in moderate:
-        return _C["amber"]
-    else:
-        return _C["red"]
+def _severity_color(result) -> str:
+    """Hex color for a metric result, graded against its own metric."""
+    return {
+        severity.OK:   _C["green"],
+        severity.WARN: _C["amber"],
+        severity.BAD:  _C["red"],
+    }[severity.severity(result)]
 
 
-def _severity_label(interpretation: str) -> str:
-    """Map interpretation to display label with icon."""
-    icons = {
-        "healthy": "✓", "uniform": "✓", "stable": "✓", "low": "✓",
-        "moderate": "⚠",
-    }
-    icon = icons.get(interpretation, "✗")
-    return f"{icon}  {interpretation.upper()}"
+def _severity_label(result) -> str:
+    """Display label with status icon, graded against the result's own metric."""
+    icon = {severity.OK: "✓", severity.WARN: "⚠", severity.BAD: "✗"}[
+        severity.severity(result)
+    ]
+    return f"{icon}  {result.interpretation.upper()}"
 
 
 def _apply_style(ax, title: str, xlabel: str, ylabel: str) -> None:
@@ -145,7 +142,7 @@ def plot_anisotropy(
     n_show = min(50, len(eigenvalues))
     evs = eigenvalues[:n_show]
     indices = np.arange(1, n_show + 1)
-    color = _severity_color(result.interpretation)
+    color = _severity_color(result)
 
     with mpl.rc_context(_STYLE):
         fig, ax = plt.subplots(figsize=figsize)
@@ -161,7 +158,7 @@ def plot_anisotropy(
 
         _apply_style(ax,
                      title=f"Anisotropy — Eigenvalue Spectrum  "
-                           f"[Score: {result.score:.3f}  {_severity_label(result.interpretation)}]",
+                           f"[Score: {result.score:.3f}  {_severity_label(result)}]",
                      xlabel="Principal Component (sorted descending)",
                      ylabel="Eigenvalue")
 
@@ -216,7 +213,7 @@ def plot_dimensionality(
     evr = result.explained_variance_ratio * 100
     n = len(cum_var)
     x = np.arange(1, n + 1)
-    color = _severity_color(result.interpretation)
+    color = _severity_color(result)
 
     with mpl.rc_context(_STYLE):
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=figsize)
@@ -261,7 +258,7 @@ def plot_dimensionality(
             f"Effective Dimensionality  —  "
             f"{result.effective_dims} / {result.nominal_dims} dims used  "
             f"({result.utilization:.1%})  |  PR = {result.participation_ratio:.1f}  |  "
-            f"{_severity_label(result.interpretation)}",
+            f"{_severity_label(result)}",
             color=_C["navy"], fontsize=12, fontweight="bold", y=1.01
         )
 
@@ -298,7 +295,7 @@ def plot_density(
     mpl, plt, mpatches = _require_matplotlib()
 
     result = report.density
-    color = _severity_color(result.interpretation)
+    color = _severity_color(result)
 
     with mpl.rc_context(_STYLE):
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=figsize)
@@ -351,7 +348,7 @@ def plot_density(
 
         fig.suptitle(
             f"Density Distribution  —  CV = {result.cv:.3f}  |  "
-            f"{_severity_label(result.interpretation)}  |  "
+            f"{_severity_label(result)}  |  "
             f"{result.n_outliers} outliers",
             color=_C["navy"], fontsize=12, fontweight="bold", y=1.01
         )
@@ -389,7 +386,7 @@ def plot_sensitivity(
     mpl, plt, mpatches = _require_matplotlib()
 
     result = report.sensitivity
-    color = _severity_color(result.interpretation)
+    color = _severity_color(result)
 
     with mpl.rc_context(_STYLE):
         fig, ax = plt.subplots(figsize=figsize)
@@ -416,7 +413,7 @@ def plot_sensitivity(
 
         _apply_style(ax,
                      title=f"Retrieval Sensitivity Index — Stability Distribution  "
-                           f"[{_severity_label(result.interpretation)}]",
+                           f"[{_severity_label(result)}]",
                      xlabel="Stability Score  (Jaccard similarity under perturbation)",
                      ylabel="Number of Embeddings")
 
@@ -473,7 +470,7 @@ def plot_intrinsic_dim(
     mpl, plt, mpatches = _require_matplotlib()
 
     result = report.intrinsic_dim
-    color = _severity_color(result.interpretation)
+    color = _severity_color(result)
 
     log_mu = result.log_mu
     log_surv = result.log_survival
@@ -498,7 +495,7 @@ def plot_intrinsic_dim(
                      title=f"Intrinsic Dimensionality — TwoNN Log-Log Fit  "
                            f"[d_int = {result.d_int:.1f}  |  "
                            f"R² = {result.r_squared:.3f}  |  "
-                           f"{_severity_label(result.interpretation)}]",
+                           f"{_severity_label(result)}]",
                      xlabel="log(μ)   where  μ = dist(2nd NN) / dist(1st NN)",
                      ylabel="log(1 − F(μ))")
 
@@ -615,24 +612,24 @@ def plot_summary(
         rows = [
             ["Anisotropy Score",
              f"{report.anisotropy.score:.3f}",
-             _severity_label(report.anisotropy.interpretation),
-             report.anisotropy.interpretation],
+             _severity_label(report.anisotropy),
+             report.anisotropy],
             ["Effective Dimensions",
              f"{report.dimensionality.effective_dims} / {report.dimensionality.nominal_dims}  ({report.dimensionality.utilization:.1%})",
-             _severity_label(report.dimensionality.interpretation),
-             report.dimensionality.interpretation],
+             _severity_label(report.dimensionality),
+             report.dimensionality],
             ["Density CV",
              f"{report.density.cv:.3f}",
-             _severity_label(report.density.interpretation),
-             report.density.interpretation],
+             _severity_label(report.density),
+             report.density],
             ["Retrieval Stability",
              f"{report.sensitivity.mean_stability:.3f}",
-             _severity_label(report.sensitivity.interpretation),
-             report.sensitivity.interpretation],
+             _severity_label(report.sensitivity),
+             report.sensitivity],
             ["Intrinsic Dimension",
              f"{report.intrinsic_dim.d_int:.1f}  (R²={report.intrinsic_dim.r_squared:.2f})",
-             _severity_label(report.intrinsic_dim.interpretation),
-             report.intrinsic_dim.interpretation],
+             _severity_label(report.intrinsic_dim),
+             report.intrinsic_dim],
         ]
 
         col_labels = ["Metric", "Value", "Status"]

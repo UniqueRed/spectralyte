@@ -147,7 +147,7 @@ def _emit_json(report: AuditReport) -> None:
     Write the audit report as JSON to stdout.
 
     Mirrors the schema of report.export() exactly so downstream consumers
-    (TUI, MCP server) see identical structure whether reading from a file
+    see identical structure whether reading from a file
     or piping from the CLI.
     """
     data = {

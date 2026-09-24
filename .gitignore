@@ -1,3 +1,55 @@
+# Virtual environments
 .venv/
+venv/
+env/
+
+# Environment variables
 .env
+.env.*
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / build artifacts
+dist/
+build/
+*.egg-info/
+*.egg
+.eggs/
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Test and coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+
+# MyPy
+.mypy_cache/
+.dmypy.json
+
+# Ruff / linting
+.ruff_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Generated data files
+*.npy
+plots/
+
+# Project-specific
 spec/
+
+# Generated audit output
+spectralyte_audit.json

@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import numpy as np
 from dataclasses import dataclass
-from typing import Optional
+from typing import ClassVar, Optional
 
 
 # ── Result dataclass ───────────────────────────────────────────────────────────
@@ -56,6 +56,10 @@ class AnisotropyResult:
     sample_size : int
         Number of vectors used for Gram matrix computation.
     """
+
+    #: Metric identity, used by spectralyte.core.severity to grade
+    #: this result. Not a dataclass field.
+    METRIC: ClassVar[str] = "anisotropy"
 
     score: float
     eigenvalues: np.ndarray

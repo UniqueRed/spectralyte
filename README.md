@@ -29,7 +29,7 @@ Spectralyte Audit Report
   Effective Dimensions   183 / 384  (47.7%)   ✓  HEALTHY
   Density CV             0.058   ✓  UNIFORM
   Retrieval Stability    0.953   ✓  STABLE
-  Intrinsic Dimension    8.2   (R²=0.888)   ✓  LOW
+  Intrinsic Dimension    42.3   (R²=0.991)   ✓  MODERATE
 ════════════════════════════════════════════════════
   ✓ No issues detected. Embedding space looks healthy.
 ```
@@ -48,7 +48,7 @@ Spectralyte answers that question with five geometric metrics derived from linea
 | **Effective Dimensionality** | Space is lower-dimensional than expected — distinct content collapses together |
 | **Density Distribution** | Tight clusters with voids — small query changes flip entire result sets |
 | **Retrieval Sensitivity** | Unstable regions — rephrasing a query returns completely different documents |
-| **Intrinsic Dimensionality** | True manifold complexity — guides dimensionality reduction decisions |
+| **Intrinsic Dimensionality** | True manifold complexity — a `d_int` far below the nominal dimension means the space has collapsed; also guides dimensionality reduction decisions |
 
 ---
 
@@ -195,7 +195,7 @@ Spectralyte ships a command-line interface for auditing embeddings without writi
 # Human-readable summary
 spectralyte audit my_embeddings.npy
 
-# Structured JSON — pipe to jq, CI gates, the TUI, or the MCP server
+# Structured JSON — pipe to jq, CI gates, or any downstream tooling
 spectralyte audit my_embeddings.npy --json
 
 # Override configuration
@@ -211,7 +211,7 @@ Spectralyte Audit Report
   Effective Dimensions   183 / 384  (47.7%)   ✓  HEALTHY
   Density CV             0.058   ✓  UNIFORM
   Retrieval Stability    0.953   ✓  STABLE
-  Intrinsic Dimension    8.2   (R²=0.888)   ✓  LOW
+  Intrinsic Dimension    42.3   (R²=0.991)   ✓  MODERATE
 ════════════════════════════════════════════════════
   ✓ No issues detected. Embedding space looks healthy.
 ```
