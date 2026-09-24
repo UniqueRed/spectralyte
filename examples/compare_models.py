@@ -15,7 +15,6 @@ Usage:
 
 import argparse
 import time
-import numpy as np
 
 
 def parse_args():

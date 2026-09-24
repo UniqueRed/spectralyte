@@ -68,7 +68,7 @@ def main():
     dataset = load_dataset("ag_news", split=f"train[:{args.n_docs}]")
     docs = [row["text"].strip() for row in dataset if len(row["text"].strip()) > 50]
     info(f"Loaded {len(docs)} documents in {time.time() - t0:.1f}s")
-    info(f"Categories: World, Sports, Business, Technology")
+    info("Categories: World, Sports, Business, Technology")
     info(f'Sample: "{docs[0][:80]}..."')
 
     # Step 2: Embed
@@ -158,7 +158,7 @@ def main():
     print(f"  Model     : {args.model}")
     print(f"  Shape     : {embeddings.shape}")
     print()
-    print(f"  BEFORE transform:")
+    print("  BEFORE transform:")
     print(f"    Anisotropy    : {report.anisotropy.score:.3f}  ({report.anisotropy.interpretation})")
     print(f"    Effective dims: {report.dimensionality.effective_dims}/{report.dimensionality.nominal_dims}")
     print(f"    Density CV    : {report.density.cv:.3f}  ({report.density.interpretation})")
@@ -166,7 +166,7 @@ def main():
     print(f"    Intrinsic dim : {report.intrinsic_dim.d_int:.1f}  (R2={report.intrinsic_dim.r_squared:.3f})")
     if report_fixed is not report:
         print()
-        print(f"  AFTER whitening:")
+        print("  AFTER whitening:")
         print(f"    Anisotropy    : {report_fixed.anisotropy.score:.3f}  ({report_fixed.anisotropy.interpretation})")
         print(f"    Effective dims: {report_fixed.dimensionality.effective_dims}/{report_fixed.dimensionality.nominal_dims}")
         print(f"    Density CV    : {report_fixed.density.cv:.3f}  ({report_fixed.density.interpretation})")

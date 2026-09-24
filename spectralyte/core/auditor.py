@@ -342,22 +342,17 @@ class Spectralyte:
         capture corpus-level bias rather than document-specific semantics.
         Removing them reveals the document-level variation underneath.
 
-        Transformation: V -= V @ U_k @ U_k^T
+        Transformation: V -= V @ W_k @ W_k^T
         Then L2-normalize rows.
         """
         V = embeddings - embeddings.mean(axis=0)
 
-        # Compute top-k left singular vectors via SVD
-        # Only need left singular vectors (U)
-        U, _, _ = np.linalg.svd(V, full_matrices=False)
-        U_k = U[:, :k]   # shape (n, k) — top k left singular vectors
-
-        # Project out the top-k components
-        # V -= V @ U_k @ U_k^T projects onto the orthogonal complement
-        # Corrected: use right singular vectors for column space projection
+        # The projection acts on the column (feature) space, so it needs the
+        # right singular vectors, not the left ones.
         _, _, Vt = np.linalg.svd(V, full_matrices=False)
         W_k = Vt[:k, :].T   # shape (d, k) — top k right singular vectors
 
+        # Project onto the orthogonal complement of the top-k directions
         V_abtt = V - V @ W_k @ W_k.T
 
         # L2 normalize

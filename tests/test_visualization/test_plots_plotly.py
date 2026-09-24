@@ -11,11 +11,11 @@ Since these tests run in a headless environment we test that:
 - Figures don't raise on edge case inputs
 """
 
+import os
+import tempfile
+
 import numpy as np
 import pytest
-plotly = pytest.importorskip("plotly", reason="plotly not installed")
-import tempfile
-import os
 
 from spectralyte import Spectralyte
 from spectralyte.visualization.plots_plotly import (
@@ -23,6 +23,11 @@ from spectralyte.visualization.plots_plotly import (
     plot_sensitivity, plot_intrinsic_dim, plot_summary, plot_all,
     _hex_to_rgb, _severity_color
 )
+
+# plots_plotly imports plotly lazily (via _require_plotly), so this module
+# imports cleanly without it. Every test below calls a plot function, though,
+# so skip the whole module when plotly is absent.
+pytest.importorskip("plotly", reason="plotly not installed")
 
 
 # ── Fixtures ───────────────────────────────────────────────────────────────────

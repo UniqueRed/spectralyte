@@ -37,7 +37,7 @@ from __future__ import annotations
 import pickle
 import numpy as np
 from typing import Literal, Optional, Tuple
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 # ── Zone type ──────────────────────────────────────────────────────────────────

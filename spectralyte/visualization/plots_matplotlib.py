@@ -147,8 +147,8 @@ def plot_anisotropy(
     with mpl.rc_context(_STYLE):
         fig, ax = plt.subplots(figsize=figsize)
 
-        bars = ax.bar(indices, evs, color=color, alpha=0.85,
-                      edgecolor=_C["navy"], linewidth=0.4, zorder=3)
+        ax.bar(indices, evs, color=color, alpha=0.85,
+               edgecolor=_C["navy"], linewidth=0.4, zorder=3)
 
         # Equal distribution reference line
         equal_ev = float(np.mean(evs))

@@ -19,11 +19,9 @@ import numpy as np
 import pytest
 import tempfile
 import os
-import pickle
 
 from spectralyte.core.router import (
-    Router, CentroidSet, Zone,
-    _l2_normalize, _l2_normalize_single,
+    Router, CentroidSet, _l2_normalize, _l2_normalize_single,
     _compute_centroids_and_radius, _min_cosine_distance
 )
 from spectralyte import Spectralyte
@@ -63,8 +61,6 @@ def simple_router(embedding_dim):
     Simple router with manually constructed brittle and boundary centroids.
     Makes it easy to write deterministic tests.
     """
-    rng = np.random.RandomState(42)
-
     # Brittle centroid in one direction
     brittle_center = np.zeros(embedding_dim)
     brittle_center[0] = 1.0   # points in +x direction

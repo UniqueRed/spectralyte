@@ -10,9 +10,8 @@ object with human-readable summary, visualization, and export capabilities.
 from __future__ import annotations
 
 import json
-import numpy as np
 from dataclasses import dataclass, field
-from typing import Optional, Literal, TYPE_CHECKING
+from typing import Optional, Literal
 
 from spectralyte.metrics.anisotropy import AnisotropyResult
 from spectralyte.metrics.dimensionality import DimensionalityResult
@@ -221,7 +220,7 @@ class AuditReport:
         if self.n_issues == 0:
             lines.append(fmt("  ✓ No issues detected. Embedding space looks healthy.", "green"))
         elif self.n_issues == 1:
-            lines.append(fmt(f"  ⚠ 1 issue detected.", "yellow"))
+            lines.append(fmt("  ⚠ 1 issue detected.", "yellow"))
         else:
             lines.append(fmt(f"  ✗ {self.n_issues} issues detected.", "red"))
 
@@ -363,13 +362,15 @@ class AuditReport:
             "",
         ]
 
-        has_issues = False
+        # Issues are numbered in the order they are emitted, so a plan that
+        # skips a healthy metric still reads 1, 2, 3 rather than jumping.
+        issue_n = 0
 
         # ── Anisotropy fix ─────────────────────────────────────────────────────
         if self.anisotropy.interpretation not in {"healthy"}:
-            has_issues = True
+            issue_n += 1
             lines += [
-                f"Issue 1: High Anisotropy (score={self.anisotropy.score:.3f})",
+                f"Issue {issue_n}: High Anisotropy (score={self.anisotropy.score:.3f})",
                 "─" * 40,
                 "Root cause: Embedding vectors cluster along a few directions.",
                 "Cosine similarity loses discriminative power.",
@@ -385,9 +386,9 @@ class AuditReport:
 
         # ── Dimensionality fix ─────────────────────────────────────────────────
         if self.dimensionality.interpretation not in {"healthy", "moderate"}:
-            has_issues = True
+            issue_n += 1
             lines += [
-                f"Issue 2: Low Effective Dimensionality "
+                f"Issue {issue_n}: Low Effective Dimensionality "
                 f"({self.dimensionality.effective_dims}/{self.dimensionality.nominal_dims} dims used)",
                 "─" * 40,
                 "Root cause: Most embedding dimensions carry noise, not signal.",
@@ -402,7 +403,7 @@ class AuditReport:
 
         # ── Density fix ────────────────────────────────────────────────────────
         if self.density.interpretation not in {"uniform", "moderate"}:
-            has_issues = True
+            issue_n += 1
             if framework == "langchain":
                 code = [
                     "  from langchain.vectorstores import Chroma",
@@ -428,7 +429,7 @@ class AuditReport:
                 ]
 
             lines += [
-                f"Issue 3: High Density Clustering (CV={self.density.cv:.3f})",
+                f"Issue {issue_n}: High Density Clustering (CV={self.density.cv:.3f})",
                 "─" * 40,
                 f"Root cause: {self.density.n_outliers} outlier embeddings detected.",
                 "Queries near cluster boundaries return inconsistent results.",
@@ -438,9 +439,9 @@ class AuditReport:
 
         # ── Sensitivity fix ────────────────────────────────────────────────────
         if self.sensitivity.interpretation not in {"stable", "moderate"}:
-            has_issues = True
+            issue_n += 1
             lines += [
-                f"Issue 4: High Retrieval Sensitivity "
+                f"Issue {issue_n}: High Retrieval Sensitivity "
                 f"(stability={self.sensitivity.mean_stability:.3f})",
                 "─" * 40,
                 f"Root cause: {self.sensitivity.n_brittle} embeddings in brittle zones.",
@@ -459,7 +460,7 @@ class AuditReport:
                 "",
             ]
 
-        if not has_issues:
+        if issue_n == 0:
             lines += [
                 "  No critical issues detected.",
                 "  Your embedding space is geometrically healthy.",

@@ -20,7 +20,7 @@ Key properties verified:
 import numpy as np
 import pytest
 from spectralyte.metrics.intrinsic_dim import (
-    compute, IntrinsicDimResult, _compute_mu_values, _l2_normalize
+    compute, IntrinsicDimResult, _compute_mu_values
 )
 
 

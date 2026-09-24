@@ -41,7 +41,7 @@ from __future__ import annotations
 
 import numpy as np
 from dataclasses import dataclass, field
-from typing import ClassVar, Optional, Tuple
+from typing import ClassVar, Optional
 from scipy.spatial import cKDTree
 from sklearn.neighbors import LocalOutlierFactor
 

@@ -18,7 +18,7 @@ Key properties verified:
 import numpy as np
 import pytest
 from spectralyte.metrics.sensitivity import (
-    compute, SensitivityResult, _jaccard, _l2_normalize
+    compute, SensitivityResult, _jaccard
 )
 
 

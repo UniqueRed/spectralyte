@@ -153,8 +153,8 @@ def plot_anisotropy(report: "AuditReport", show: bool = True, save_path: Optiona
         margin=dict(t=100, b=60, l=70, r=40),
         annotations=[dict(
             x=0.02, y=0.97, xref="paper", yref="paper",
-            text=f"Concentration in few eigenvalues indicates anisotropy.<br>"
-                 f"Flat spectrum = isotropic (healthy). Spike = anisotropic (problematic).",
+            text="Concentration in few eigenvalues indicates anisotropy.<br>"
+                 "Flat spectrum = isotropic (healthy). Spike = anisotropic (problematic).",
             showarrow=False,
             font=dict(size=11, color=_C["muted"]),
             align="left",
@@ -207,7 +207,7 @@ def plot_dimensionality(report: "AuditReport", show: bool = True, save_path: Opt
         mode="lines",
         line=dict(color=_C["blue"], width=2),
         fill="tozeroy",
-        fillcolor=f"rgba(26, 95, 168, 0.1)",
+        fillcolor="rgba(26, 95, 168, 0.1)",
         name="Cumulative variance",
         hovertemplate="Component %{x}<br>Cumulative: %{y:.1f}%<extra></extra>",
     ), row=1, col=1)
@@ -285,7 +285,6 @@ def plot_density(report: "AuditReport", show: bool = True, save_path: Optional[s
     """
     go, _ = _require_plotly()
     from plotly.subplots import make_subplots
-    import numpy as np
 
     result = report.density
     color = _severity_color(result)
@@ -294,7 +293,7 @@ def plot_density(report: "AuditReport", show: bool = True, save_path: Optional[s
         rows=1, cols=2,
         subplot_titles=(
             f"k-NN Distance Distribution (k={result.k})",
-            f"Local Outlier Factor Distribution"
+            "Local Outlier Factor Distribution"
         ),
         horizontal_spacing=0.12,
     )
@@ -492,7 +491,6 @@ def plot_intrinsic_dim(report: "AuditReport", show: bool = True, save_path: Opti
         If provided, save the figure to this path.
     """
     go, _ = _require_plotly()
-    import numpy as np
 
     result = report.intrinsic_dim
     color = _severity_color(result)

@@ -37,8 +37,8 @@ Reference:
 from __future__ import annotations
 
 import numpy as np
-from dataclasses import dataclass, field
-from typing import ClassVar, Optional
+from dataclasses import dataclass
+from typing import ClassVar
 from sklearn.decomposition import TruncatedSVD
 
 
