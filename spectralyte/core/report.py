@@ -252,7 +252,7 @@ class AuditReport:
 
         Example
         -------
-        >>> fixed = audit.transform(embeddings, strategy='whiten')
+        >>> fixed = audit.transform(strategy='whiten')
         >>> report_after = audit.run(fixed)
         >>> report_after.compare()
         """
@@ -432,8 +432,13 @@ class AuditReport:
                     "  # Fix anisotropy — no re-embedding required",
                     "  from spectralyte import Spectralyte",
                     "  audit = Spectralyte(embeddings)",
-                    "  fixed_embeddings = audit.transform(embeddings, strategy='whiten')",
+                    "  audit.run()",
+                    "  fixed_embeddings = audit.transform(strategy='whiten')",
                     "  # Re-index fixed_embeddings in your vector database",
+                    "",
+                    "  # At query time, send the query through the same transform,",
+                    "  # or it will not land in the same space as the index:",
+                    "  fixed_query = audit.transform(query_embedding, strategy='whiten')",
                 ],
             )
 
@@ -448,8 +453,11 @@ class AuditReport:
                     "Benefits: Faster retrieval, reduced storage, less noise.",
                     "",
                     "  # Reduce dimensionality — no re-embedding required",
-                    "  fixed_embeddings = audit.transform(embeddings, strategy='pca_reduce')",
+                    "  fixed_embeddings = audit.transform(strategy='pca_reduce')",
                     "  # Re-index fixed_embeddings in your vector database",
+                    "",
+                    "  # Queries must be reduced the same way before searching:",
+                    "  fixed_query = audit.transform(query_embedding, strategy='pca_reduce')",
                 ],
             )
 
@@ -535,7 +543,7 @@ class AuditReport:
                     "",
                     "  # 2. If the low intrinsic dimension is genuine, stop paying",
                     "  #    to store and search dimensions that carry nothing",
-                    "  fixed_embeddings = audit.transform(embeddings, strategy='pca_reduce')",
+                    "  fixed_embeddings = audit.transform(strategy='pca_reduce')",
                 ],
             )
 

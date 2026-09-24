@@ -7,6 +7,24 @@
   `version` subcommands. `audit --json` emits the same schema as
   `report.export()` on clean stdout, so it composes with `jq` and CI gates.
 
+### Changed
+- **`transform()` now fits once and applies many times.** Every strategy
+  previously recomputed its transform from whatever array it was handed, so
+  there was no way to put a query into the same space as the index — the
+  central remediation workflow. A single query centered against itself became
+  the zero vector, silently: all three strategies returned all-zeros for a
+  one-row input, and following the documented "transform incoming query
+  embeddings the same way" drove recall@1 to 0.000 in a 2000-document
+  benchmark. Batched calls fared better only by accident, and their output
+  shifted with the composition of the batch.
+
+  The transform parameters (corpus mean, whitening matrix, right singular
+  vectors) are now fitted lazily against the audited matrix and cached, then
+  applied unchanged. `transform()` accepts a single `(d,)` vector and answers
+  in kind, defaults to the audited corpus when given nothing, rejects a width
+  that does not match the audit, and refits when `run()` is called on a new
+  matrix. Per-query and batched output are now bit-identical.
+
 ### Fixed
 - **Inverted health grading for intrinsic dimensionality.** `report.n_issues`,
   `summary()`, the exported JSON, and both plot backends all graded
@@ -51,13 +69,17 @@
   zero-byte placeholders that nothing imported).
 
 ### Internal
-- 460 tests passing across all modules, including regression coverage for the
+- 478 tests passing across all modules, including regression coverage for the
   grading fix above.
 - Dedicated property tests for the three correction transforms
   (`tests/test_transforms/`), covering the mathematics rather than just
   shapes: whitening flattens the covariance spectrum, ABTT genuinely projects
   out the top-k principal directions, and `pca_reduce` returns decorrelated
   components.
+- Contract tests for the fit/apply split: a lone query must match its row in
+  the transformed corpus, output must not depend on batch composition, and a
+  stale fit must not survive a new audit. Mutation testing confirms they fail
+  if the per-call refit is reintroduced.
 - Regression tests locking the `fix_plan()` / `n_issues` invariant: the plan
   must emit exactly one section per counted issue, numbered sequentially, with
   a collapsed manifold always producing guidance.

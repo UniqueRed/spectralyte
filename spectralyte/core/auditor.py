@@ -88,9 +88,16 @@ class Spectralyte:
         self.random_seed = random_seed
 
         self._report: Optional[AuditReport] = None
-        self._pca_components: Optional[np.ndarray] = None
+
+        # The matrix the current report was computed from. transform() fits
+        # against this, not against whatever array it is handed, so a query
+        # lands in the same space as the indexed corpus.
+        self._audited: Optional[np.ndarray] = None
+
+        # Fitted transform parameters, populated lazily by _fit_transforms().
         self._pca_mean: Optional[np.ndarray] = None
         self._whitening_matrix: Optional[np.ndarray] = None
+        self._right_singular_vectors: Optional[np.ndarray] = None
 
     # ── Run ────────────────────────────────────────────────────────────────────
 
@@ -230,6 +237,13 @@ class Spectralyte:
 
         self._report = report
 
+        # A new audit means a new reference space; discard the fit derived
+        # from the previous one rather than silently reusing it.
+        self._audited = E
+        self._pca_mean = None
+        self._whitening_matrix = None
+        self._right_singular_vectors = None
+
         if verbose:
             print()
 
@@ -239,24 +253,29 @@ class Spectralyte:
 
     def transform(
         self,
-        embeddings: np.ndarray,
+        embeddings: Optional[np.ndarray] = None,
         strategy: Literal["whiten", "abtt", "pca_reduce"] = "whiten",
         abtt_k: int = 3,
     ) -> np.ndarray:
         """
-        Apply a geometric correction transform to an embedding matrix.
+        Apply a geometric correction transform.
+
+        The transform is *fitted once* on the audited matrix and then applied
+        to whatever you pass in. That is what makes it usable at query time:
+        a single incoming query runs through the same mapping as the indexed
+        corpus, so the two stay in one space.
 
         Transforms correct anisotropy (whiten, abtt) or reduce dimensionality
-        (pca_reduce) directly on existing embeddings — no re-embedding required.
-        After transforming, re-index the result in your vector database.
-
-        Note: Also transform incoming query embeddings at runtime using the
-        same strategy before searching, to ensure consistency.
+        (pca_reduce) directly on existing embeddings — no re-embedding
+        required. After transforming your corpus, re-index the result, then
+        transform each query with the same call before searching.
 
         Parameters
         ----------
-        embeddings : np.ndarray
-            Embedding matrix to transform. Shape (n, d).
+        embeddings : Optional[np.ndarray]
+            Vectors to transform, shape (n, d) or a single (d,) vector.
+            Defaults to the audited matrix, so ``audit.transform()`` returns
+            the corrected corpus. The width must match the audited matrix.
         strategy : str
             Transform to apply:
             - 'whiten': isotropic covariance transform (reduces anisotropy)
@@ -268,22 +287,24 @@ class Spectralyte:
         Returns
         -------
         np.ndarray
-            Transformed embeddings. Same shape as input unless
-            strategy='pca_reduce', which returns shape (n, effective_dims).
+            Transformed embeddings, same row count as the input — and 1D if
+            the input was 1D. Width is unchanged except for 'pca_reduce',
+            which returns (n, effective_dims).
 
         Raises
         ------
         RuntimeError
             If run() has not been called before transform().
         ValueError
-            If strategy is not one of the three valid options.
+            If strategy is unknown, or the input width does not match the
+            audited matrix.
 
         Example
         -------
         >>> report = audit.run()
-        >>> fixed = audit.transform(embeddings, strategy='whiten')
-        >>> report_after = audit.run(fixed)
-        >>> report_after.compare()
+        >>> corpus_fixed = audit.transform(strategy='whiten')
+        >>> # ... index corpus_fixed ...
+        >>> query_fixed = audit.transform(query_vector, strategy='whiten')
         """
         if self._report is None:
             raise RuntimeError(
@@ -291,94 +312,116 @@ class Spectralyte:
                 "The audit results are needed to compute the transform."
             )
 
-        if strategy == "whiten":
-            return self._whiten(embeddings)
-        elif strategy == "abtt":
-            return self._abtt(embeddings, k=abtt_k)
-        elif strategy == "pca_reduce":
-            return self._pca_reduce(embeddings)
-        else:
+        if strategy not in ("whiten", "abtt", "pca_reduce"):
             raise ValueError(
                 f"Unknown strategy '{strategy}'. "
                 f"Choose one of: 'whiten', 'abtt', 'pca_reduce'."
             )
 
-    def _whiten(self, embeddings: np.ndarray) -> np.ndarray:
+        X = self._audited if embeddings is None else embeddings
+        X = np.asarray(X)
+
+        # A single query arrives as (d,); accept it and answer in kind.
+        was_1d = X.ndim == 1
+        if was_1d:
+            X = X.reshape(1, -1)
+        if X.ndim != 2:
+            raise ValueError(
+                f"embeddings must be 1D (d,) or 2D (n, d), got shape {X.shape}"
+            )
+
+        expected = self._audited.shape[1]
+        if X.shape[1] != expected:
+            raise ValueError(
+                f"embeddings have {X.shape[1]} dimensions but the audit was "
+                f"run on {expected}-dimensional vectors. A transform fitted on "
+                f"one space cannot be applied to another."
+            )
+
+        self._fit_transforms()
+
+        if strategy == "whiten":
+            out = self._apply_whiten(X)
+        elif strategy == "abtt":
+            out = self._apply_abtt(X, k=abtt_k)
+        else:
+            out = self._apply_pca_reduce(X)
+
+        return out[0] if was_1d else out
+
+    # ── Fitting ────────────────────────────────────────────────────────────────
+
+    def _fit_transforms(self) -> None:
         """
-        Whitening transform — makes covariance matrix equal to identity.
+        Compute and cache the transform parameters from the audited matrix.
 
-        Computes covariance C = (1/n) V^T V, then applies C^(-1/2) via
-        eigendecomposition. The result has isotropic covariance structure,
-        which corrects anisotropy.
-
-        Transformation: V_white = V @ C^(-1/2)
-        Then L2-normalize rows.
+        Fitted lazily — an audit that never transforms should not pay for an
+        SVD. All three strategies derive from the same centered decomposition,
+        so one pass serves them all, and ABTT can answer any abtt_k from the
+        stored right singular vectors without refitting.
         """
-        V = embeddings - embeddings.mean(axis=0)
-        n = V.shape[0]
-        C = (V.T @ V) / n   # covariance matrix
+        if self._whitening_matrix is not None:
+            return
 
-        # Eigendecomposition of symmetric covariance matrix
+        V = self._audited - self._audited.mean(axis=0)
+        self._pca_mean = self._audited.mean(axis=0)
+
+        # Whitening: C^(-1/2) via eigendecomposition of the covariance.
+        C = (V.T @ V) / V.shape[0]
         eigenvalues, eigenvectors = np.linalg.eigh(C)
+        eigenvalues = np.clip(eigenvalues, 1e-10, None)   # numerical stability
+        self._whitening_matrix = (
+            eigenvectors @ np.diag(eigenvalues ** -0.5) @ eigenvectors.T
+        )
 
-        # Clip small/negative eigenvalues for numerical stability
-        eigenvalues = np.clip(eigenvalues, 1e-10, None)
-
-        # C^(-1/2) = Q @ diag(lambda^(-1/2)) @ Q^T
-        whitening = eigenvectors @ np.diag(eigenvalues ** -0.5) @ eigenvectors.T
-
-        V_white = V @ whitening
-
-        # L2 normalize
-        norms = np.linalg.norm(V_white, axis=1, keepdims=True)
-        norms = np.where(norms == 0, 1.0, norms)
-        return V_white / norms
-
-    def _abtt(self, embeddings: np.ndarray, k: int = 3) -> np.ndarray:
-        """
-        All-but-the-Top transform — removes dominant principal components.
-
-        The top k principal components of the embedding matrix tend to
-        capture corpus-level bias rather than document-specific semantics.
-        Removing them reveals the document-level variation underneath.
-
-        Transformation: V -= V @ W_k @ W_k^T
-        Then L2-normalize rows.
-        """
-        V = embeddings - embeddings.mean(axis=0)
-
-        # The projection acts on the column (feature) space, so it needs the
-        # right singular vectors, not the left ones.
+        # Right singular vectors serve both ABTT and pca_reduce.
         _, _, Vt = np.linalg.svd(V, full_matrices=False)
-        W_k = Vt[:k, :].T   # shape (d, k) — top k right singular vectors
+        self._right_singular_vectors = Vt
 
-        # Project onto the orthogonal complement of the top-k directions
-        V_abtt = V - V @ W_k @ W_k.T
-
-        # L2 normalize
-        norms = np.linalg.norm(V_abtt, axis=1, keepdims=True)
+    @staticmethod
+    def _l2_normalize(X: np.ndarray) -> np.ndarray:
+        """L2-normalize rows, leaving zero rows untouched."""
+        norms = np.linalg.norm(X, axis=1, keepdims=True)
         norms = np.where(norms == 0, 1.0, norms)
-        return V_abtt / norms
+        return X / norms
 
-    def _pca_reduce(self, embeddings: np.ndarray) -> np.ndarray:
+    # ── Applying ───────────────────────────────────────────────────────────────
+
+    def _apply_whiten(self, X: np.ndarray) -> np.ndarray:
         """
-        PCA dimensionality reduction to effective dimensionality.
+        Whitening — makes the corpus covariance the identity.
 
-        Reduces embeddings from nominal_dims to effective_dims using the
-        principal components identified in the audit. Removes noise dimensions
-        while preserving the meaningful variance structure.
+        Centers by the corpus mean and applies the fitted C^(-1/2), so the
+        mapping is identical for one query and for the whole index.
+        """
+        return self._l2_normalize((X - self._pca_mean) @ self._whitening_matrix)
 
-        Returns shape (n, effective_dims).
+    def _apply_abtt(self, X: np.ndarray, k: int = 3) -> np.ndarray:
+        """
+        All-but-the-Top — removes the corpus's dominant directions.
+
+        The top k principal components capture corpus-level bias rather than
+        document-specific semantics. Removing them reveals the variation
+        underneath. Projection acts on the feature space, so it uses the right
+        singular vectors.
+        """
+        if k < 0:
+            raise ValueError(f"abtt_k must be non-negative, got {k}")
+
+        W_k = self._right_singular_vectors[:k, :].T   # (d, k)
+        centered = X - self._pca_mean
+        return self._l2_normalize(centered - centered @ W_k @ W_k.T)
+
+    def _apply_pca_reduce(self, X: np.ndarray) -> np.ndarray:
+        """
+        PCA reduction onto the measured effective dimensionality.
+
+        Projects onto the corpus's top components, dropping the dimensions the
+        audit found to carry noise rather than signal.
         """
         k = self._report.dimensionality.effective_dims
-        V = embeddings - embeddings.mean(axis=0)
-
-        # Use SVD to get principal components
-        _, _, Vt = np.linalg.svd(V, full_matrices=False)
-        components = Vt[:k, :]   # shape (k, d)
-
-        # Project embeddings onto top-k components
-        return V @ components.T   # shape (n, k)
+        components = self._right_singular_vectors[:k, :]   # (k, d)
+        return (X - self._pca_mean) @ components.T
 
     # ── Router ────────────────────────────────────────────────────────────────
 

@@ -114,19 +114,25 @@ def test_whiten_flattens_eigenvalue_spectrum(audit, anisotropic_embeddings):
     assert after < before
 
 
-def test_whiten_handles_rank_deficient_input(audit):
+def test_whiten_handles_rank_deficient_corpus():
     """
-    A rank-deficient matrix produces near-zero eigenvalues. The
-    implementation clips them at 1e-10, so the result must stay finite
-    rather than blowing up to inf/nan.
+    A rank-deficient corpus produces near-zero covariance eigenvalues, which
+    the fit clips at 1e-10. The result must stay finite rather than blowing
+    up to inf/nan.
+
+    The degenerate matrix has to be the *audited* one: the transform is
+    fitted on the corpus, so handing a degenerate matrix to transform() of a
+    healthy audit would exercise nothing.
     """
     rng = np.random.RandomState(0)
-    latent = rng.randn(60, 3)
-    basis = rng.randn(3, 32)
-    degenerate = latent @ basis          # rank 3 in 32 nominal dims
+    degenerate = rng.randn(60, 3) @ rng.randn(3, 32)   # rank 3 in 32 dims
 
-    out = audit.transform(degenerate, strategy="whiten")
+    a = Spectralyte(degenerate, k=5, random_seed=42)
+    a.run(verbose=False)
+
+    out = a.transform(strategy="whiten")
     assert np.all(np.isfinite(out))
+    assert np.all(np.isfinite(a.transform(degenerate[0], strategy="whiten")))
 
 
 # ── abtt ───────────────────────────────────────────────────────────────────────
@@ -239,3 +245,130 @@ def test_transform_is_deterministic(audit, anisotropic_embeddings, strategy):
     a = audit.transform(anisotropic_embeddings, strategy=strategy)
     b = audit.transform(anisotropic_embeddings, strategy=strategy)
     assert np.array_equal(a, b)
+
+
+# ── Fit / apply separation ─────────────────────────────────────────────────────
+#
+# The contract that makes remediation usable in production: the transform is
+# fitted once on the audited corpus and applied unchanged thereafter. Before
+# this existed, each call refit on whatever array it was given — so a single
+# query centered against itself became the zero vector, and the documented
+# workflow (transform the corpus, transform each query the same way) drove
+# recall@1 to zero without raising anything.
+
+@pytest.fixture
+def fitted(anisotropic_embeddings):
+    a = Spectralyte(anisotropic_embeddings, k=5, random_seed=42)
+    a.run(verbose=False)
+    return a
+
+
+@pytest.mark.parametrize("strategy", ["whiten", "abtt", "pca_reduce"])
+def test_single_query_matches_its_row_in_the_corpus(fitted, anisotropic_embeddings, strategy):
+    """A lone query must map exactly where that vector maps in the corpus."""
+    corpus_out = fitted.transform(strategy=strategy)
+    query_out = fitted.transform(anisotropic_embeddings[7], strategy=strategy)
+
+    assert np.allclose(query_out, corpus_out[7], atol=1e-6)
+
+
+@pytest.mark.parametrize("strategy", ["whiten", "abtt", "pca_reduce"])
+def test_single_query_is_not_degenerate(fitted, anisotropic_embeddings, strategy):
+    """The old refit collapsed a single query to all zeros, silently."""
+    out = fitted.transform(anisotropic_embeddings[0], strategy=strategy)
+
+    assert not np.allclose(out, 0.0)
+    assert np.all(np.isfinite(out))
+
+
+@pytest.mark.parametrize("strategy", ["whiten", "abtt", "pca_reduce"])
+def test_output_does_not_depend_on_batch_composition(fitted, anisotropic_embeddings, strategy):
+    """
+    The same vectors must transform identically whether sent alone, in a
+    small batch, or inside a large one. Refitting per call made the result a
+    function of the batch it happened to travel in.
+    """
+    rows = anisotropic_embeddings[:5]
+
+    alone = np.vstack([fitted.transform(r, strategy=strategy) for r in rows])
+    small = fitted.transform(rows, strategy=strategy)
+    large = fitted.transform(anisotropic_embeddings[:150], strategy=strategy)[:5]
+
+    assert np.allclose(alone, small, atol=1e-6)
+    assert np.allclose(alone, large, atol=1e-6)
+
+
+@pytest.mark.parametrize("strategy", ["whiten", "abtt", "pca_reduce"])
+def test_1d_input_returns_1d_output(fitted, anisotropic_embeddings, strategy):
+    """A (d,) query answers as (d,), not (1, d)."""
+    out = fitted.transform(anisotropic_embeddings[0], strategy=strategy)
+    assert out.ndim == 1
+
+
+def test_transform_defaults_to_the_audited_corpus(fitted, anisotropic_embeddings):
+    """transform() with no array returns the corrected corpus."""
+    assert np.array_equal(
+        fitted.transform(strategy="whiten"),
+        fitted.transform(anisotropic_embeddings, strategy="whiten"),
+    )
+
+
+def test_width_mismatch_is_rejected(fitted):
+    """
+    A transform fitted on one space cannot be applied to another. This must
+    raise rather than return quietly wrong vectors.
+    """
+    wrong = np.random.RandomState(0).randn(10, 999)
+    with pytest.raises(ValueError, match="dimensions"):
+        fitted.transform(wrong, strategy="whiten")
+
+
+def test_refits_after_a_new_audit(anisotropic_embeddings):
+    """
+    Auditing a different matrix establishes a new reference space; the stale
+    fit from the previous corpus must not be reused.
+    """
+    a = Spectralyte(anisotropic_embeddings, k=5, random_seed=42)
+    a.run(verbose=False)
+    before = a.transform(anisotropic_embeddings[0], strategy="whiten")
+
+    rng = np.random.RandomState(9)
+    other = rng.randn(200, anisotropic_embeddings.shape[1]) * 4 + 30
+    a.run(other, verbose=False)
+    after = a.transform(anisotropic_embeddings[0], strategy="whiten")
+
+    assert not np.allclose(before, after, atol=1e-6)
+
+
+@pytest.mark.parametrize("strategy", ["whiten", "abtt", "pca_reduce"])
+def test_queries_and_corpus_stay_in_one_space(strategy):
+    """
+    The end-to-end property the transform exists to provide: a perturbed
+    query still retrieves its source document after both sides are
+    transformed, with queries handled one at a time as in serving.
+
+    Deliberately uses a well-conditioned corpus. On an ill-conditioned one
+    whitening amplifies the near-null directions and wrecks recall — a real
+    property of whitening, not of the fit/apply split under test here, and
+    conflating the two would make this assert the wrong thing.
+    """
+    rng = np.random.RandomState(4)
+    corpus = rng.randn(300, 48)
+    bias = rng.randn(48)
+    bias /= np.linalg.norm(bias)
+    corpus = corpus + bias * 6.0          # anisotropic, but well conditioned
+
+    a = Spectralyte(corpus, k=5, random_seed=42)
+    a.run(verbose=False)
+
+    idx = np.arange(0, 90, 3)
+    queries = corpus[idx] + rng.randn(len(idx), 48) * 0.05
+
+    corpus_out = a.transform(strategy=strategy)
+    q_out = np.vstack([a.transform(q, strategy=strategy) for q in queries])
+
+    def _unit(x):
+        return x / np.linalg.norm(x, axis=1, keepdims=True)
+
+    hits = np.argmax(_unit(q_out) @ _unit(corpus_out).T, axis=1)
+    assert (hits == idx).mean() >= 0.9

@@ -102,13 +102,13 @@ For the most common problems, Spectralyte corrects them directly — no re-embed
 
 ```python
 # Fix anisotropy via whitening transform
-fixed = audit.transform(embeddings, strategy="whiten")
+fixed = audit.transform(strategy="whiten")
 
 # Fix anisotropy via All-but-the-Top (ABTT)
-fixed = audit.transform(embeddings, strategy="abtt", abtt_k=3)
+fixed = audit.transform(strategy="abtt", abtt_k=3)
 
 # Reduce to effective dimensionality (saves storage, speeds retrieval)
-fixed = audit.transform(embeddings, strategy="pca_reduce")
+fixed = audit.transform(strategy="pca_reduce")
 
 # Re-audit to verify improvement
 report_fixed = audit.run(fixed)
@@ -125,6 +125,35 @@ Spectralyte — Before / After Comparison
   Retrieval Stability         0.580  →    0.810      +39.7%
 ══════════════════════════════════════════════════════════
 ```
+
+### Transforming queries
+
+The transform is fitted once on the audited corpus and applied unchanged
+afterwards, so a query maps exactly where that vector would map in the index.
+**Send every query through the same call before searching** — an untransformed
+query and a transformed index are in different spaces, and retrieval degrades
+without raising anything.
+
+```python
+audit = Spectralyte(corpus)
+audit.run()
+
+index_vectors = audit.transform(strategy="whiten")   # defaults to the corpus
+# ... index index_vectors ...
+
+# At query time — a single (d,) vector is fine, and comes back 1D
+query_vectors = audit.transform(query_embedding, strategy="whiten")
+```
+
+The fit lives on the `Spectralyte` instance, so keep it (or re-run the audit on
+the same corpus) for as long as the index is in use. Re-running `run()` on a
+different matrix establishes a new reference space and refits.
+
+> **Whitening is not always the right fix.** It rescales every direction to
+> equal variance, which on an ill-conditioned space amplifies near-null
+> directions and can make retrieval worse than leaving the embeddings alone.
+> Check `report.compare()` against a retrieval metric you trust before shipping
+> it; `abtt` is the more conservative choice.
 
 ---
 
