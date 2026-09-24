@@ -19,6 +19,22 @@
 - Metric results are now graded against their own metric's polarity via the new
   `spectralyte.core.severity` module; the interpretation labels are not
   comparable across metrics and are no longer treated as if they were.
+- **`fix_plan()` and `n_issues` disagreed.** `n_issues` counts any metric that
+  is not healthy, but `fix_plan()` carried a hand-maintained if-chain that
+  skipped the `moderate` tier for dimensionality, density and sensitivity, and
+  had no branch at all for intrinsic dimensionality. A report could print
+  "3 issues detected — run fix_plan()" and then return a plan addressing one of
+  them; a collapsed manifold, the most serious finding available, produced no
+  guidance whatsoever. The plan now iterates the same severity grading
+  `n_issues` uses, so the two cannot drift apart, and tags each section
+  CRITICAL or WARNING rather than presenting a borderline reading with the
+  same urgency as an active failure.
+- Added a remediation section for collapsed manifolds, which states plainly
+  that no transform fixes them — whitening and ABTT redistribute variance and
+  cannot recreate information that was never present — and points at corpus
+  duplication, truncating preprocessing, and model mismatch instead.
+- `needs_transform` is likewise graded through `severity` instead of its own
+  label thresholds.
 - Remediation plan issue numbering. `fix_plan()` hardcoded a number per issue
   *type*, so a report with no anisotropy problem opened at "Issue 2" and read
   like a truncated document. Issues are now numbered in emission order.
@@ -35,13 +51,16 @@
   zero-byte placeholders that nothing imported).
 
 ### Internal
-- 450 tests passing across all modules, including regression coverage for the
+- 460 tests passing across all modules, including regression coverage for the
   grading fix above.
 - Dedicated property tests for the three correction transforms
   (`tests/test_transforms/`), covering the mathematics rather than just
   shapes: whitening flattens the covariance spectrum, ABTT genuinely projects
   out the top-k principal directions, and `pca_reduce` returns decorrelated
   components.
+- Regression tests locking the `fix_plan()` / `n_issues` invariant: the plan
+  must emit exactly one section per counted issue, numbered sequentially, with
+  a collapsed manifold always producing guidance.
 - Lint is clean (`ruff check .` passes): removed unused imports and variables,
   dropped placeholder-less f-strings, and reordered the Plotly test imports so
   the `importorskip` guard no longer sits mid-import-block.

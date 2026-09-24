@@ -171,7 +171,7 @@ print(plan)
   Framework: langchain
 ════════════════════════════════════════════════════════
 
-Issue 1: High Density Clustering (CV=0.84)
+Issue 1: High Density Clustering (CV=0.84)  [CRITICAL]
 ────────────────────────────────────────
 Root cause: 847 boundary documents detected.
 Fix: Switch to Maximum Marginal Relevance (MMR) retrieval.

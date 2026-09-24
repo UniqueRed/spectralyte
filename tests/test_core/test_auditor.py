@@ -16,9 +16,11 @@ Tests the full audit pipeline end-to-end, verifying that:
 import json
 import numpy as np
 import pytest
+import re
 import tempfile
 import os
 from spectralyte import Spectralyte
+from spectralyte.core import severity
 from spectralyte.core.report import AuditReport
 
 
@@ -379,3 +381,104 @@ def test_compare_after_transform_shows_table(small_embeddings, capsys):
     captured = capsys.readouterr()
     assert "Before" in captured.out
     assert "After" in captured.out
+
+# ── fix_plan() / n_issues coherence ────────────────────────────────────────────
+#
+# These lock the invariant that fix_plan() addresses exactly the metrics
+# n_issues counts. The two used to disagree: n_issues counted any non-healthy
+# metric, while fix_plan() carried a hand-maintained if-chain that skipped the
+# "moderate" tier for three of the five metrics and had no branch at all for
+# intrinsic_dim. A report could print "3 issues detected — run fix_plan()" and
+# then hand back a plan addressing one of them.
+
+def _plan_issue_numbers(plan):
+    return re.findall(r"^Issue (\d+):", plan, re.M)
+
+
+@pytest.fixture
+def collapsed_embeddings():
+    """Rank-3 data in 96 nominal dims — trips intrinsic_dim and dimensionality."""
+    rng = np.random.default_rng(11)
+    return (rng.normal(size=(300, 3)) @ rng.normal(size=(3, 96))).astype(np.float32)
+
+
+@pytest.fixture
+def clustered_embeddings():
+    """Two well-separated clusters — trips the density metric."""
+    rng = np.random.default_rng(5)
+    return np.vstack([rng.normal(size=(150, 32)),
+                      rng.normal(size=(150, 32)) + 18]).astype(np.float32)
+
+
+@pytest.mark.parametrize(
+    "fixture_name",
+    ["small_embeddings", "collapsed_embeddings", "clustered_embeddings"],
+)
+def test_fix_plan_section_count_matches_n_issues(fixture_name, request):
+    """Every metric n_issues counts must get a section, and no others."""
+    emb = request.getfixturevalue(fixture_name)
+    report = Spectralyte(emb, k=5, random_seed=42).run(verbose=False)
+
+    assert len(_plan_issue_numbers(report.fix_plan())) == report.n_issues
+
+
+@pytest.mark.parametrize(
+    "fixture_name",
+    ["small_embeddings", "collapsed_embeddings", "clustered_embeddings"],
+)
+def test_fix_plan_numbering_is_sequential(fixture_name, request):
+    """Issues are numbered 1..n in emission order, never skipping."""
+    emb = request.getfixturevalue(fixture_name)
+    report = Spectralyte(emb, k=5, random_seed=42).run(verbose=False)
+
+    nums = _plan_issue_numbers(report.fix_plan())
+    assert nums == [str(i + 1) for i in range(len(nums))]
+
+
+def test_fix_plan_covers_collapsed_manifold(collapsed_embeddings):
+    """
+    A collapsed manifold is the most serious finding Spectralyte makes and
+    must produce guidance, not silence. It previously had no branch at all.
+    """
+    report = Spectralyte(collapsed_embeddings, k=5, random_seed=42).run(verbose=False)
+    assert severity.severity(report.intrinsic_dim) == severity.BAD
+
+    plan = report.fix_plan()
+    assert "Collapsed Manifold" in plan
+    # The honest part: transforms cannot undo a collapse.
+    assert "no transform fixes this" in plan
+
+
+def test_fix_plan_distinguishes_warn_from_bad(collapsed_embeddings):
+    """Sections are tagged by severity so a borderline reading is not
+    presented with the same urgency as an active failure."""
+    report = Spectralyte(collapsed_embeddings, k=5, random_seed=42).run(verbose=False)
+    plan = report.fix_plan()
+
+    levels = [severity.severity(getattr(report, m)) for m in severity.METRIC_NAMES]
+    if severity.BAD in levels:
+        assert "[CRITICAL]" in plan
+    if severity.WARN in levels:
+        assert "[WARNING]" in plan
+        assert "Borderline reading" in plan
+
+
+def test_fix_plan_healthy_report_has_no_sections():
+    """A clean space yields no numbered issues at all."""
+    rng = np.random.default_rng(3)
+    emb = rng.normal(size=(300, 64)).astype(np.float32)
+    report = Spectralyte(emb, k=5, random_seed=42).run(verbose=False)
+
+    assert report.n_issues == 0
+    plan = report.fix_plan()
+    assert _plan_issue_numbers(plan) == []
+    assert "No issues detected" in plan
+
+
+def test_needs_transform_agrees_with_severity(collapsed_embeddings):
+    """needs_transform is graded through severity, not its own thresholds."""
+    report = Spectralyte(collapsed_embeddings, k=5, random_seed=42).run(verbose=False)
+
+    expected = (not severity.is_healthy(report.anisotropy)
+                or not severity.is_healthy(report.dimensionality))
+    assert report.needs_transform == expected

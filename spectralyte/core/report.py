@@ -113,9 +113,12 @@ class AuditReport:
         """
         True if anisotropy or dimensionality issues detected.
         These are the two problems fixable via direct embedding transforms.
+
+        Graded through :mod:`spectralyte.core.severity`, so this agrees with
+        n_issues and fix_plan() instead of applying its own label thresholds.
         """
-        return self.anisotropy.interpretation not in {"healthy"} or \
-               self.dimensionality.interpretation not in {"healthy", "moderate"}
+        return (not severity.is_healthy(self.anisotropy)
+                or not severity.is_healthy(self.dimensionality))
 
     @property
     def has_brittle_zones(self) -> bool:
@@ -331,10 +334,16 @@ class AuditReport:
         """
         Generate a framework-specific remediation plan with working code.
 
-        For each detected issue, provides a specific actionable fix with
-        copy-paste code targeting the specified framework. Transforms are
-        recommended for anisotropy and dimensionality. Framework-specific
-        retrieval strategy changes are recommended for density and sensitivity.
+        Emits one section per metric that :attr:`n_issues` counts, in metric
+        order, so the plan and the issue count always agree. Each section is
+        tagged CRITICAL or WARNING according to
+        :mod:`spectralyte.core.severity`.
+
+        Transforms are recommended for anisotropy and dimensionality.
+        Framework-specific retrieval strategy changes are recommended for
+        density and sensitivity. A collapsed manifold (intrinsic_dim) is
+        reported as a data or model problem, since no transform can recover
+        information the embeddings never carried.
 
         Parameters
         ----------
@@ -362,48 +371,90 @@ class AuditReport:
             "",
         ]
 
-        # Issues are numbered in the order they are emitted, so a plan that
-        # skips a healthy metric still reads 1, 2, 3 rather than jumping.
+        # Every metric that n_issues counts gets a section here, so the two
+        # can never disagree. Gating goes through spectralyte.core.severity
+        # rather than local label sets — the labels are not comparable across
+        # metrics, and "moderate" means different things in different ones.
         issue_n = 0
 
-        # ── Anisotropy fix ─────────────────────────────────────────────────────
-        if self.anisotropy.interpretation not in {"healthy"}:
+        for metric in severity.METRIC_NAMES:
+            result = getattr(self, metric)
+            level = severity.severity(result)
+            if level == severity.OK:
+                continue
+
             issue_n += 1
+            title, body = self._remediation_for(metric, framework)
+
             lines += [
-                f"Issue {issue_n}: High Anisotropy (score={self.anisotropy.score:.3f})",
+                f"Issue {issue_n}: {title}  "
+                f"[{'CRITICAL' if level == severity.BAD else 'WARNING'}]",
                 "─" * 40,
-                "Root cause: Embedding vectors cluster along a few directions.",
-                "Cosine similarity loses discriminative power.",
-                "Fix: Apply whitening or ABTT transform to your embeddings.",
-                "",
-                "  # Fix anisotropy — no re-embedding required",
-                "  from spectralyte import Spectralyte",
-                "  audit = Spectralyte(embeddings)",
-                "  fixed_embeddings = audit.transform(embeddings, strategy='whiten')",
-                "  # Re-index fixed_embeddings in your vector database",
-                "",
+            ]
+            if level == severity.WARN:
+                lines.append(
+                    "Borderline reading, not an active failure — worth "
+                    "watching rather than fixing today."
+                )
+            lines += body + [""]
+
+        if issue_n == 0:
+            lines += [
+                "  No issues detected.",
+                "  Your embedding space is geometrically healthy.",
+                "  No remediation needed at this time.",
             ]
 
-        # ── Dimensionality fix ─────────────────────────────────────────────────
-        if self.dimensionality.interpretation not in {"healthy", "moderate"}:
-            issue_n += 1
-            lines += [
-                f"Issue {issue_n}: Low Effective Dimensionality "
-                f"({self.dimensionality.effective_dims}/{self.dimensionality.nominal_dims} dims used)",
-                "─" * 40,
-                "Root cause: Most embedding dimensions carry noise, not signal.",
-                f"Fix: Reduce to {self.dimensionality.effective_dims} dimensions via PCA.",
-                "Benefits: Faster retrieval, reduced storage, less noise.",
-                "",
-                "  # Reduce dimensionality — no re-embedding required",
-                "  fixed_embeddings = audit.transform(embeddings, strategy='pca_reduce')",
-                "  # Re-index fixed_embeddings in your vector database",
-                "",
-            ]
+        lines += ["═" * 56, ""]
+        return "\n".join(lines)
 
-        # ── Density fix ────────────────────────────────────────────────────────
-        if self.density.interpretation not in {"uniform", "moderate"}:
-            issue_n += 1
+    def _remediation_for(
+        self,
+        metric: str,
+        framework: str,
+    ) -> "tuple[str, list[str]]":
+        """
+        Title and body lines for one metric's remediation section.
+
+        Split out of fix_plan() so the plan can iterate over every metric
+        severity flags, rather than carrying a hand-maintained if-chain that
+        drifted out of step with n_issues.
+        """
+        if metric == "anisotropy":
+            r = self.anisotropy
+            return (
+                f"High Anisotropy (score={r.score:.3f})",
+                [
+                    "Root cause: Embedding vectors cluster along a few directions.",
+                    "Cosine similarity loses discriminative power.",
+                    "Fix: Apply whitening or ABTT transform to your embeddings.",
+                    "",
+                    "  # Fix anisotropy — no re-embedding required",
+                    "  from spectralyte import Spectralyte",
+                    "  audit = Spectralyte(embeddings)",
+                    "  fixed_embeddings = audit.transform(embeddings, strategy='whiten')",
+                    "  # Re-index fixed_embeddings in your vector database",
+                ],
+            )
+
+        if metric == "dimensionality":
+            r = self.dimensionality
+            return (
+                f"Low Effective Dimensionality "
+                f"({r.effective_dims}/{r.nominal_dims} dims used)",
+                [
+                    "Root cause: Most embedding dimensions carry noise, not signal.",
+                    f"Fix: Reduce to {r.effective_dims} dimensions via PCA.",
+                    "Benefits: Faster retrieval, reduced storage, less noise.",
+                    "",
+                    "  # Reduce dimensionality — no re-embedding required",
+                    "  fixed_embeddings = audit.transform(embeddings, strategy='pca_reduce')",
+                    "  # Re-index fixed_embeddings in your vector database",
+                ],
+            )
+
+        if metric == "density":
+            r = self.density
             if framework == "langchain":
                 code = [
                     "  from langchain.vectorstores import Chroma",
@@ -427,48 +478,71 @@ class AuditReport:
                     "  # MMR balances relevance with result diversity",
                     "  # Consult your vector DB docs for MMR configuration",
                 ]
+            return (
+                f"High Density Clustering (CV={r.cv:.3f})",
+                [
+                    f"Root cause: {r.n_outliers} outlier embeddings detected.",
+                    "Queries near cluster boundaries return inconsistent results.",
+                    "Fix: Switch to Maximum Marginal Relevance (MMR) retrieval.",
+                    "",
+                ] + code,
+            )
 
-            lines += [
-                f"Issue {issue_n}: High Density Clustering (CV={self.density.cv:.3f})",
-                "─" * 40,
-                f"Root cause: {self.density.n_outliers} outlier embeddings detected.",
-                "Queries near cluster boundaries return inconsistent results.",
-                "Fix: Switch to Maximum Marginal Relevance (MMR) retrieval.",
-                "",
-            ] + code + [""]
+        if metric == "sensitivity":
+            r = self.sensitivity
+            return (
+                f"High Retrieval Sensitivity (stability={r.mean_stability:.3f})",
+                [
+                    f"Root cause: {r.n_brittle} embeddings in brittle zones.",
+                    "Small query changes produce large result set changes.",
+                    "Fix: Install the Spectralyte router for intelligent query routing.",
+                    "",
+                    "  # Build router from audit results",
+                    "  router = audit.get_router()",
+                    "  router.save('spectralyte_router.pkl')",
+                    "",
+                    "  # At query time",
+                    "  from spectralyte import Router",
+                    "  router = Router.load('spectralyte_router.pkl')",
+                    "  zone = router.classify(query_embedding)",
+                    "  # Zone is 'stable', 'brittle', or 'dense_boundary'",
+                ],
+            )
 
-        # ── Sensitivity fix ────────────────────────────────────────────────────
-        if self.sensitivity.interpretation not in {"stable", "moderate"}:
-            issue_n += 1
-            lines += [
-                f"Issue {issue_n}: High Retrieval Sensitivity "
-                f"(stability={self.sensitivity.mean_stability:.3f})",
-                "─" * 40,
-                f"Root cause: {self.sensitivity.n_brittle} embeddings in brittle zones.",
-                "Small query changes produce large result set changes.",
-                "Fix: Install the Spectralyte router for intelligent query routing.",
-                "",
-                "  # Build router from audit results",
-                "  router = audit.get_router()",
-                "  router.save('spectralyte_router.pkl')",
-                "",
-                "  # At query time",
-                "  from spectralyte import Router",
-                "  router = Router.load('spectralyte_router.pkl')",
-                "  zone = router.classify(query_embedding)",
-                "  # Zone is 'stable', 'brittle', or 'dense_boundary'",
-                "",
-            ]
+        if metric == "intrinsic_dim":
+            r = self.intrinsic_dim
+            ratio = r.d_int / r.n_dims if r.n_dims else 0.0
+            return (
+                f"Collapsed Manifold (d_int={r.d_int:.1f} of {r.n_dims} dims)",
+                [
+                    f"Root cause: The embeddings occupy roughly {ratio:.1%} of the "
+                    "space they nominally live in.",
+                    "Nearly all variation lies along a handful of latent directions.",
+                    "",
+                    "Note: no transform fixes this. Whitening and ABTT redistribute "
+                    "variance; they cannot",
+                    "recreate information the embeddings never carried. Treat this "
+                    "as a data or model problem.",
+                    "",
+                    "Likely causes: near-duplicate corpus content, a preprocessing "
+                    "step truncating inputs,",
+                    "or an embedding model mismatched to your domain.",
+                    "",
+                    "  # 1. Check whether the corpus itself is degenerate",
+                    "  import numpy as np",
+                    "  unique = np.unique(np.round(embeddings, 5), axis=0)",
+                    "  print(f'{len(unique)} unique rows of {len(embeddings)}')",
+                    "",
+                    "  # 2. If the low intrinsic dimension is genuine, stop paying",
+                    "  #    to store and search dimensions that carry nothing",
+                    "  fixed_embeddings = audit.transform(embeddings, strategy='pca_reduce')",
+                ],
+            )
 
-        if issue_n == 0:
-            lines += [
-                "  No critical issues detected.",
-                "  Your embedding space is geometrically healthy.",
-                "  No remediation needed at this time.",
-            ]
-
-        lines += ["═" * 56, ""]
-        return "\n".join(lines)
+        # severity.severity_of() degrades unknown metrics to BAD, so an
+        # unrecognized name reaches here rather than being silently dropped.
+        return (f"Unrecognized metric '{metric}'",
+                ["No remediation guidance is registered for this metric."])
 
     # ── Export ─────────────────────────────────────────────────────────────────
 
