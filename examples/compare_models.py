@@ -39,7 +39,8 @@ def embed_corpus(docs, model_name):
 def audit_embeddings(embeddings):
     from spectralyte import Spectralyte
     audit = Spectralyte(embeddings, k=10, random_seed=42)
-    report = audit.run(verbose=False)
+    # experimental=True: the comparison table reports all five metrics.
+    report = audit.run(verbose=False, experimental=True)
     return {
         "anisotropy":       report.anisotropy.score,
         "aniso_interp":     report.anisotropy.interpretation,
@@ -180,7 +181,8 @@ def main():
             short = model_name.split("/")[-1]
             model_dir = str(Path(args.save_plots) / short)
             audit = Spectralyte(embeddings, k=10, random_seed=42)
-            report = audit.run(verbose=False)
+            # experimental=True: the comparison table reports all five metrics.
+            report = audit.run(verbose=False, experimental=True)
             report.plot(backend="matplotlib", show=False, save_dir=model_dir)
             print(f"  Saved {short} -> {model_dir}/")
 

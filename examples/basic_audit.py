@@ -36,7 +36,11 @@ print(f"Embedding matrix: {n} vectors × {d} dims\n")
 
 # ── Run the audit ──────────────────────────────────────────────────────────────
 audit = Spectralyte(embeddings, k=10, random_seed=42)
-report = audit.run()
+
+# The default audit computes the two validated metrics — anisotropy and
+# effective dimensionality — and decides the health verdict from those alone.
+# The router below is built from the experimental metrics, so this run opts in.
+report = audit.run(experimental=True)
 
 # ── Print the summary ──────────────────────────────────────────────────────────
 report.summary()

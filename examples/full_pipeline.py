@@ -89,7 +89,9 @@ def main():
     from spectralyte import Spectralyte
     t0 = time.time()
     audit = Spectralyte(embeddings, k=10, random_seed=42)
-    report = audit.run(verbose=True)
+    # experimental=True: this walkthrough reports all five metrics and builds
+    # the router, which needs density and sensitivity.
+    report = audit.run(verbose=True, experimental=True)
     info(f"Audit completed in {time.time() - t0:.1f}s")
     report.summary()
 
@@ -106,7 +108,7 @@ def main():
 
         step(5, "Re-auditing fixed embeddings...")
         audit_fixed = Spectralyte(fixed_embeddings, k=10, random_seed=42)
-        report_fixed = audit_fixed.run(verbose=True)
+        report_fixed = audit_fixed.run(verbose=True, experimental=True)
         report_fixed._pre_transform_report = report
         print()
         report_fixed.compare()
