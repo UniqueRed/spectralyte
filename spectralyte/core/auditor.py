@@ -118,6 +118,7 @@ class Spectralyte:
         self,
         embeddings: Optional[np.ndarray] = None,
         verbose: bool = True,
+        experimental: bool = False,
     ) -> AuditReport:
         """
         Run the full geometric audit on the embedding matrix.
@@ -134,6 +135,15 @@ class Spectralyte:
             embeddings without creating a new Spectralyte instance.
         verbose : bool
             If True, prints progress during computation. Default True.
+        experimental : bool
+            Also compute density, retrieval sensitivity and intrinsic
+            dimensionality. Default False.
+
+            These measure real geometric properties but none has a
+            demonstrated relationship to retrieval quality, and two of the
+            three dominate the runtime, so they are off by default and never
+            affect ``n_issues`` or ``needs_transform``. Required for
+            :meth:`get_router`.
 
         Returns
         -------
@@ -154,7 +164,7 @@ class Spectralyte:
 
         # ── Metric 1: Anisotropy ───────────────────────────────────────────────
         if verbose:
-            print("  [1/5] Computing anisotropy...", end=" ", flush=True)
+            print("  [1/2] Computing anisotropy...", end=" ", flush=True)
 
         anisotropy_result = anisotropy.compute(
             E,
@@ -170,7 +180,7 @@ class Spectralyte:
 
         # ── Metric 2: Effective Dimensionality ────────────────────────────────
         if verbose:
-            print("  [2/5] Computing effective dimensionality...", end=" ", flush=True)
+            print("  [2/2] Computing effective dimensionality...", end=" ", flush=True)
 
         dimensionality_result = dimensionality.compute(
             E,
@@ -184,58 +194,59 @@ class Spectralyte:
                 f"({dimensionality_result.interpretation})"
             )
 
-        # ── Metric 3: Density Distribution ────────────────────────────────────
-        if verbose:
-            print("  [3/5] Computing density distribution...", end=" ", flush=True)
+        # ── Experimental metrics ──────────────────────────────────────────────
+        density_result = sensitivity_result = intrinsic_result = None
 
-        density_sample = self.sample_size or min(10_000, n)
-        density_result = density.compute(
-            E,
-            k=self.k,
-            sample_size=density_sample,
-            random_seed=self.random_seed,
-        )
+        if experimental:
+            if verbose:
+                print("  [3/5] Computing density distribution...", end=" ", flush=True)
 
-        if verbose:
-            print(
-                f"CV={density_result.cv:.3f} "
-                f"({density_result.interpretation})"
+            density_sample = self.sample_size or min(10_000, n)
+            density_result = density.compute(
+                E,
+                k=self.k,
+                sample_size=density_sample,
+                random_seed=self.random_seed,
             )
 
-        # ── Metric 4: Retrieval Sensitivity Index ─────────────────────────────
-        if verbose:
-            print("  [4/5] Computing retrieval sensitivity...", end=" ", flush=True)
+            if verbose:
+                print(
+                    f"CV={density_result.cv:.3f} "
+                    f"({density_result.interpretation})"
+                )
 
-        sensitivity_result = sensitivity.compute(
-            E,
-            k=self.k,
-            m=self.sensitivity_m,
-            epsilon_fraction=self.sensitivity_epsilon,
-            sample_size=self.sample_size,
-            random_seed=self.random_seed,
-        )
+            if verbose:
+                print("  [4/5] Computing retrieval sensitivity...", end=" ", flush=True)
 
-        if verbose:
-            print(
-                f"stability={sensitivity_result.mean_stability:.3f} "
-                f"({sensitivity_result.interpretation})"
+            sensitivity_result = sensitivity.compute(
+                E,
+                k=self.k,
+                m=self.sensitivity_m,
+                epsilon_fraction=self.sensitivity_epsilon,
+                sample_size=self.sample_size,
+                random_seed=self.random_seed,
             )
 
-        # ── Metric 5: Intrinsic Dimensionality ────────────────────────────────
-        if verbose:
-            print("  [5/5] Computing intrinsic dimensionality...", end=" ", flush=True)
+            if verbose:
+                print(
+                    f"stability={sensitivity_result.mean_stability:.3f} "
+                    f"({sensitivity_result.interpretation})"
+                )
 
-        intrinsic_result = intrinsic_dim.compute(
-            E,
-            sample_size=self.sample_size or 5000,
-            random_seed=self.random_seed,
-        )
+            if verbose:
+                print("  [5/5] Computing intrinsic dimensionality...", end=" ", flush=True)
 
-        if verbose:
-            print(
-                f"d_int={intrinsic_result.d_int:.1f} "
-                f"(R²={intrinsic_result.r_squared:.3f})"
+            intrinsic_result = intrinsic_dim.compute(
+                E,
+                sample_size=self.sample_size or 5000,
+                random_seed=self.random_seed,
             )
+
+            if verbose:
+                print(
+                    f"d_int={intrinsic_result.d_int:.1f} "
+                    f"(R²={intrinsic_result.r_squared:.3f})"
+                )
 
         # ── Assemble report ───────────────────────────────────────────────────
         report = AuditReport(
@@ -390,6 +401,12 @@ class Spectralyte:
         if self._report is None:
             raise RuntimeError(
                 "Call audit.run() before audit.get_router()."
+            )
+        if not self._report.has_experimental:
+            raise RuntimeError(
+                "The router is built from the density and sensitivity metrics, "
+                "which are experimental and off by default. "
+                "Re-run as audit.run(experimental=True) first."
             )
 
         from spectralyte.core.router import Router

@@ -58,14 +58,33 @@ _SEVERITY: dict[str, dict[str, str]] = {
     },
 }
 
-# The metric names carried by AuditReport, in report/display order.
-METRIC_NAMES = (
+# ── Metric tiers ───────────────────────────────────────────────────────────────
+#
+# CORE metrics are validated: on two BEIR datasets across three encoders, these
+# two alone predicted whether a correction transform would help retrieval, and
+# got it right on 6/6 dataset-model pairs (see benchmarks/). They decide the
+# health verdict — n_issues and needs_transform.
+#
+# EXPERIMENTAL metrics measure real geometric properties but have no
+# demonstrated relationship to retrieval quality. intrinsic_dim in particular
+# rated every space in that benchmark "low", including encoders scoring
+# nDCG@10 0.656, and scored mean-pooled GPT-2 *higher* than either sentence
+# encoder. They are computed only on request and never drive the verdict, so an
+# unvalidated signal cannot raise a false alarm about a healthy index.
+
+CORE_METRICS = (
     "anisotropy",
     "dimensionality",
+)
+
+EXPERIMENTAL_METRICS = (
     "density",
     "sensitivity",
     "intrinsic_dim",
 )
+
+# Every metric AuditReport can carry, in report/display order.
+METRIC_NAMES = CORE_METRICS + EXPERIMENTAL_METRICS
 
 
 def severity_of(metric: str, interpretation: str) -> str:

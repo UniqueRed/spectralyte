@@ -158,7 +158,9 @@ def run_pair(dataset, model, cache, sweep=True):
     relevant, query_rows = load_relevance(dataset, cache)
 
     audit = Spectralyte(D, k=10, random_seed=42)
-    report = audit.run(verbose=False)
+    # experimental=True so the record captures every metric for analysis, even
+    # though only the core two decide needs_transform.
+    report = audit.run(verbose=False, experimental=True)
 
     baseline = ndcg_at_k(Q, D, relevant, query_rows)
     row = {
@@ -169,9 +171,10 @@ def run_pair(dataset, model, cache, sweep=True):
         "n_issues": report.n_issues,
         "needs_transform": bool(report.needs_transform),
         "diagnosis": {m: getattr(report, m).interpretation
-                      for m in severity.METRIC_NAMES},
+                      for m in report.measured_metrics},
         "severity": {m: severity.severity(getattr(report, m))
-                     for m in severity.METRIC_NAMES},
+                     for m in report.measured_metrics},
+        "core_metrics": list(severity.CORE_METRICS),
         "d_int": float(report.intrinsic_dim.d_int),
         "condition_number": float(report.condition_number),
         "defaults": {},

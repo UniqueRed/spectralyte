@@ -63,6 +63,13 @@ def report(npy_file):
     return audit.run(verbose=False)
 
 
+@pytest.fixture
+def full_report(npy_file):
+    """Report including the opt-in experimental metrics."""
+    audit = Spectralyte(np.load(npy_file), k=5, random_seed=42)
+    return audit.run(verbose=False, experimental=True)
+
+
 def _run(args: list[str], **kwargs) -> subprocess.CompletedProcess:
     """Run spectralyte CLI as a subprocess and capture output."""
     return subprocess.run(
@@ -189,9 +196,9 @@ def test_emit_json_is_valid_json(report, capsys):
     assert isinstance(data, dict)
 
 
-def test_emit_json_contains_all_metric_keys(report, capsys):
-    """_emit_json output contains all five metric sections."""
-    _emit_json(report)
+def test_emit_json_contains_all_metric_keys(full_report, capsys):
+    """_emit_json emits every metric section that was computed."""
+    _emit_json(full_report)
     captured = capsys.readouterr()
     data = json.loads(captured.out)
     for key in (
@@ -213,14 +220,18 @@ def test_emit_json_top_level_keys(report, capsys):
         assert key in data
 
 
-def test_emit_json_matches_export_schema(report, capsys, tmp_path):
-    """_emit_json schema matches report.export() exactly."""
-    _emit_json(report)
+def test_emit_json_matches_export_schema(full_report, capsys, tmp_path):
+    """
+    _emit_json schema matches report.export() exactly — including which
+    experimental sections are present, since the two build their payloads
+    independently and could drift apart.
+    """
+    _emit_json(full_report)
     captured = capsys.readouterr()
     cli_data = json.loads(captured.out)
 
     export_path = str(tmp_path / "audit.json")
-    report.export(export_path)
+    full_report.export(export_path)
     with open(export_path) as f:
         export_data = json.load(f)
 
@@ -265,8 +276,8 @@ def test_audit_json_is_valid_json(npy_file):
 
 
 def test_audit_json_has_all_metric_keys(npy_file):
-    """spectralyte audit --json contains all five metric sections."""
-    result = _run(["audit", npy_file, "--json"])
+    """--json with --experimental contains all five metric sections."""
+    result = _run(["audit", npy_file, "--json", "--experimental"])
     data = json.loads(result.stdout)
     for key in (
         "anisotropy",
@@ -629,3 +640,17 @@ def test_apply_fit_missing_file_exits_1(npy_file, tmp_path):
                    "--output", str(tmp_path / "o.npy")])
     assert result.returncode == 1
     assert "Error loading transform" in result.stderr
+
+
+def test_audit_json_is_core_only_by_default(npy_file):
+    """
+    Without --experimental the payload carries the two validated metrics and
+    omits the rest, rather than emitting nulls a CI gate might misread.
+    """
+    data = json.loads(_run(["audit", npy_file, "--json"]).stdout)
+
+    assert "anisotropy" in data
+    assert "dimensionality" in data
+    for key in ("density", "sensitivity", "intrinsic_dim"):
+        assert key not in data
+    assert data["has_brittle_zones"] is None      # unmeasured, not "no"

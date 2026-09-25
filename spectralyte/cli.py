@@ -171,15 +171,21 @@ def _emit_json(report: AuditReport) -> None:
             "variance_threshold": report.dimensionality.variance_threshold,
             "interpretation": report.dimensionality.interpretation,
         },
-        "density": {
+    }
+
+    # Experimental metrics appear only when they were computed, exactly as in
+    # report.export() — the two schemas are asserted equal by the test suite.
+    if report.density is not None:
+        data["density"] = {
             "cv": report.density.cv,
             "mean_knn_distance": report.density.mean_knn_distance,
             "std_knn_distance": report.density.std_knn_distance,
             "n_outliers": report.density.n_outliers,
             "interpretation": report.density.interpretation,
             "k": report.density.k,
-        },
-        "sensitivity": {
+        }
+    if report.sensitivity is not None:
+        data["sensitivity"] = {
             "mean_stability": report.sensitivity.mean_stability,
             "n_brittle": report.sensitivity.n_brittle,
             "brittle_fraction": report.sensitivity.brittle_fraction,
@@ -187,15 +193,15 @@ def _emit_json(report: AuditReport) -> None:
             "interpretation": report.sensitivity.interpretation,
             "k": report.sensitivity.k,
             "m": report.sensitivity.m,
-        },
-        "intrinsic_dim": {
+        }
+    if report.intrinsic_dim is not None:
+        data["intrinsic_dim"] = {
             "d_int": report.intrinsic_dim.d_int,
             "r_squared": report.intrinsic_dim.r_squared,
             "interpretation": report.intrinsic_dim.interpretation,
             "trim_fraction": report.intrinsic_dim.trim_fraction,
             "n_points_used": report.intrinsic_dim.n_points_used,
-        },
-    }
+        }
 
     _json.dump(data, sys.stdout, indent=2)
     print()  # trailing newline
@@ -210,7 +216,7 @@ def cmd_audit(args: argparse.Namespace) -> None:
     kwargs = _parse_config(args.config)
 
     audit = Spectralyte(embeddings, **kwargs)
-    report = audit.run(verbose=False)
+    report = audit.run(verbose=False, experimental=args.experimental)
 
     if args.json:
         _emit_json(report)
@@ -224,7 +230,7 @@ def cmd_fix_plan(args: argparse.Namespace) -> None:
     kwargs = _parse_config(args.config)
 
     audit = Spectralyte(embeddings, **kwargs)
-    report = audit.run(verbose=False)
+    report = audit.run(verbose=False, experimental=args.experimental)
 
     print(report.fix_plan(framework=args.framework))
 
@@ -321,6 +327,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to a .npy embeddings file.",
     )
     p_audit.add_argument(
+        "--experimental",
+        action="store_true",
+        help=(
+            "Also compute density, retrieval sensitivity and intrinsic "
+            "dimensionality. Slower, and these do not affect the health "
+            "verdict — their link to retrieval quality is unverified."
+        ),
+    )
+    p_audit.add_argument(
         "--json",
         action="store_true",
         dest="json",
@@ -346,6 +361,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_fix.add_argument(
         "path",
         help="Path to a .npy embeddings file.",
+    )
+    p_fix.add_argument(
+        "--experimental",
+        action="store_true",
+        help="Also compute the experimental metrics (see `audit --help`).",
     )
     p_fix.add_argument(
         "--framework",

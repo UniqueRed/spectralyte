@@ -38,7 +38,7 @@ def report():
     rng = np.random.RandomState(42)
     embeddings = rng.randn(200, 64)
     audit = Spectralyte(embeddings, k=5, random_seed=42)
-    return audit.run(verbose=False)
+    return audit.run(verbose=False, experimental=True)
 
 
 # ── Individual plot tests ──────────────────────────────────────────────────────

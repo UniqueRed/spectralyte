@@ -38,19 +38,27 @@ Spectralyte Audit Report
 
 ## Why Spectralyte
 
-When a RAG pipeline returns wrong results, engineers have no systematic tool to diagnose why. They can inspect individual queries, run ad-hoc similarity searches, or stare at raw vectors — but nothing answers the foundational question: **is my embedding space geometrically healthy?**
+Measuring retrieval quality directly requires labelled data — queries with
+known-correct documents. Most teams don't have that, and building it is weeks
+of annotation nobody budgets for.
 
-Spectralyte answers that question with five geometric metrics derived from linear algebra and manifold theory — all computed locally, with no API calls and no cost beyond the compute already used to generate your embeddings.
+Spectralyte needs no labels. It reads your embedding matrix and tells you
+whether the space itself is structurally broken.
 
-| Metric | What It Catches |
-|--------|----------------|
-| **Anisotropy** | Vectors clustered in one direction — cosine similarity loses discriminative power |
-| **Effective Dimensionality** | Space is lower-dimensional than expected — distinct content collapses together |
-| **Density Distribution** | Tight clusters with voids — small query changes flip entire result sets |
-| **Retrieval Sensitivity** | Unstable regions — rephrasing a query returns completely different documents |
-| **Intrinsic Dimensionality** | True manifold complexity — a `d_int` far below the nominal dimension means the space has collapsed; also guides dimensionality reduction decisions |
+It will usually tell you it isn't. Modern encoders are trained with contrastive
+objectives that produce healthy geometry by construction, and on a healthy
+space these corrections make retrieval *worse* — so Spectralyte declines to
+recommend them. That verdict is the product: a cheap, label-free check that your
+embedding pipeline is not silently misconfigured.
 
----
+When something *is* wrong — raw LM hidden states used as embeddings, the wrong
+pooling, a fine-tune that collapsed — it finds it and fixes it. On mean-pooled
+GPT-2 embeddings, whitening lifted nDCG@10 from 0.028 to 0.319. See
+[Does it actually work?](#does-it-actually-work) for how that was measured.
+
+**What it is not:** a measure of retrieval quality. A healthy verdict means the
+geometry is sound, not that your search is good. Chunking, domain mismatch,
+reranking and data quality all sit outside what geometry can see.
 
 ## Installation
 
@@ -312,6 +320,40 @@ if data['n_issues'] > 0:
 ```bash
 spectralyte version
 ```
+
+---
+
+## Metric tiers
+
+The default audit computes two metrics. Both are validated: on two BEIR
+datasets across three encoders they alone predicted whether a transform would
+help retrieval, correctly on 6/6 pairs.
+
+| tier | metric | in the verdict? |
+|---|---|---|
+| **core** | Anisotropy | yes |
+| **core** | Effective dimensionality | yes |
+| experimental | Density distribution | no |
+| experimental | Retrieval Sensitivity (RSI) | no |
+| experimental | Intrinsic dimensionality (TwoNN) | no |
+
+The experimental three measure real geometric properties, but none has a
+demonstrated relationship to retrieval quality — `intrinsic_dim` rated every
+space in the benchmark "low", including encoders scoring nDCG@10 0.656. They
+never affect `n_issues` or `needs_transform`, and they are off by default
+because two of them dominate the runtime.
+
+```python
+report = audit.run()                      # core only — 3.2x faster
+report = audit.run(experimental=True)     # all five
+```
+
+```bash
+spectralyte audit embeddings.npy --experimental
+```
+
+`get_router()` requires `experimental=True`, since the router is built from the
+density and sensitivity metrics.
 
 ---
 

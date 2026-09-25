@@ -83,10 +83,12 @@ class AuditReport:
 
     anisotropy: AnisotropyResult
     dimensionality: DimensionalityResult
-    density: DensityResult
-    sensitivity: SensitivityResult
-    intrinsic_dim: IntrinsicDimResult
     embeddings_shape: tuple
+
+    # Experimental metrics — present only when run(experimental=True).
+    density: Optional[DensityResult] = None
+    sensitivity: Optional[SensitivityResult] = None
+    intrinsic_dim: Optional[IntrinsicDimResult] = None
     _pre_transform_report: Optional["AuditReport"] = field(
         default=None, repr=False
     )
@@ -96,17 +98,48 @@ class AuditReport:
     @property
     def n_issues(self) -> int:
         """
-        Number of metrics whose interpretation is not healthy for that metric.
+        Number of *core* metrics whose interpretation is not healthy.
 
-        Each result is graded against its own metric's polarity (see
-        :mod:`spectralyte.core.severity`) — the labels are not comparable
-        across metrics.
+        Counts anisotropy and dimensionality only. The experimental metrics
+        measure real properties but none has a demonstrated link to retrieval
+        quality, so letting them raise the issue count put false alarms on
+        indexes that were performing well. See :attr:`experimental_findings`
+        for those, and :mod:`spectralyte.core.severity` for the tiers.
+
+        Each result is graded against its own metric's polarity — the labels
+        are not comparable across metrics.
         """
         return sum(
             1
-            for name in severity.METRIC_NAMES
+            for name in severity.CORE_METRICS
             if not severity.is_healthy(getattr(self, name))
         )
+
+    @property
+    def experimental_findings(self) -> int:
+        """
+        Number of experimental metrics flagging something, or 0 if they were
+        not computed. Deliberately separate from :attr:`n_issues`: these are
+        observations, not a verdict.
+        """
+        return sum(
+            1
+            for name in severity.EXPERIMENTAL_METRICS
+            if getattr(self, name) is not None
+            and not severity.is_healthy(getattr(self, name))
+        )
+
+    @property
+    def has_experimental(self) -> bool:
+        """True if the experimental metrics were computed."""
+        return all(getattr(self, n) is not None
+                   for n in severity.EXPERIMENTAL_METRICS)
+
+    @property
+    def measured_metrics(self) -> tuple:
+        """Names of the metrics this report actually carries."""
+        return tuple(n for n in severity.METRIC_NAMES
+                     if getattr(self, n) is not None)
 
     @property
     def condition_number(self) -> float:
@@ -142,8 +175,14 @@ class AuditReport:
                 or severity.severity(self.dimensionality) == severity.BAD)
 
     @property
-    def has_brittle_zones(self) -> bool:
-        """True if any embeddings are in brittle retrieval zones."""
+    def has_brittle_zones(self) -> Optional[bool]:
+        """
+        True if any embeddings are in brittle retrieval zones, or None when
+        sensitivity was not computed. None means unmeasured, not "no" —
+        returning False there would assert something never checked.
+        """
+        if self.sensitivity is None:
+            return None
         return self.sensitivity.n_brittle > 0
 
     # ── Summary ────────────────────────────────────────────────────────────────
@@ -202,41 +241,46 @@ class AuditReport:
             f"   {fmt(icon + '  ' + dm.interpretation.upper(), color)}"
         )
 
-        # ── Density ────────────────────────────────────────────────────────────
-        den = self.density
-        color = _severity_color(den)
-        icon = _severity_icon(den)
-        lines.append(
-            f"  Density CV             "
-            f"{fmt(f'{den.cv:.3f}', color)}"
-            f"   {fmt(icon + '  ' + den.interpretation.upper(), color)}"
-        )
+        # ── Experimental metrics ───────────────────────────────────────────────
+        # Shown apart from the verdict: they measure real geometry but none has
+        # a demonstrated link to retrieval quality, so they inform rather than
+        # judge.
+        if self.has_experimental:
+            lines.append("─" * width)
+            lines.append(fmt("  Experimental — not validated against retrieval", "dim"))
 
-        # ── Sensitivity ────────────────────────────────────────────────────────
-        s = self.sensitivity
-        color = _severity_color(s)
-        icon = _severity_icon(s)
-        lines.append(
-            f"  Retrieval Stability    "
-            f"{fmt(f'{s.mean_stability:.3f}', color)}"
-            f"   {fmt(icon + '  ' + s.interpretation.upper(), color)}"
-        )
-        if s.n_brittle > 0:
+            den = self.density
+            color = _severity_color(den)
+            icon = _severity_icon(den)
             lines.append(
-                f"    └─ {fmt(str(s.n_brittle), 'red')} brittle zone embeddings "
-                f"({s.brittle_fraction:.1%} of index)"
+                f"  Density CV             "
+                f"{fmt(f'{den.cv:.3f}', color)}"
+                f"   {fmt(icon + '  ' + den.interpretation.upper(), color)}"
             )
 
-        # ── Intrinsic dimensionality ───────────────────────────────────────────
-        id_ = self.intrinsic_dim
-        color = _severity_color(id_)
-        icon = _severity_icon(id_)
-        lines.append(
-            f"  Intrinsic Dimension    "
-            f"{fmt(f'{id_.d_int:.1f}', color)}"
-            f"   (R²={id_.r_squared:.3f})"
-            f"   {fmt(icon + '  ' + id_.interpretation.upper(), color)}"
-        )
+            s_ = self.sensitivity
+            color = _severity_color(s_)
+            icon = _severity_icon(s_)
+            lines.append(
+                f"  Retrieval Stability    "
+                f"{fmt(f'{s_.mean_stability:.3f}', color)}"
+                f"   {fmt(icon + '  ' + s_.interpretation.upper(), color)}"
+            )
+            if s_.n_brittle > 0:
+                lines.append(
+                    f"    └─ {fmt(str(s_.n_brittle), 'red')} brittle zone embeddings "
+                    f"({s_.brittle_fraction:.1%} of index)"
+                )
+
+            id_ = self.intrinsic_dim
+            color = _severity_color(id_)
+            icon = _severity_icon(id_)
+            lines.append(
+                f"  Intrinsic Dimension    "
+                f"{fmt(f'{id_.d_int:.1f}', color)}"
+                f"   (R²={id_.r_squared:.3f})"
+                f"   {fmt(icon + '  ' + id_.interpretation.upper(), color)}"
+            )
 
         # ── Summary line ───────────────────────────────────────────────────────
         lines.append("═" * width)
@@ -323,24 +367,28 @@ class AuditReport:
             after.dimensionality.utilization,
             higher_is_better=True
         ))
-        lines.append(diff_line(
-            "Density CV",
-            before.density.cv,
-            after.density.cv,
-            higher_is_better=False
-        ))
-        lines.append(diff_line(
-            "Retrieval Stability",
-            before.sensitivity.mean_stability,
-            after.sensitivity.mean_stability,
-            higher_is_better=True
-        ))
-        lines.append(diff_line(
-            "Intrinsic Dimension",
-            before.intrinsic_dim.d_int,
-            after.intrinsic_dim.d_int,
-            higher_is_better=True
-        ))
+        # Experimental rows only when both sides measured them.
+        if before.density is not None and after.density is not None:
+            lines.append(diff_line(
+                "Density CV",
+                before.density.cv,
+                after.density.cv,
+                higher_is_better=False
+            ))
+        if before.sensitivity is not None and after.sensitivity is not None:
+            lines.append(diff_line(
+                "Retrieval Stability",
+                before.sensitivity.mean_stability,
+                after.sensitivity.mean_stability,
+                higher_is_better=True
+            ))
+        if before.intrinsic_dim is not None and after.intrinsic_dim is not None:
+            lines.append(diff_line(
+                "Intrinsic Dimension",
+                before.intrinsic_dim.d_int,
+                after.intrinsic_dim.d_int,
+                higher_is_better=True
+            ))
         lines.append("═" * width)
         lines.append("")
 
@@ -400,6 +448,8 @@ class AuditReport:
 
         for metric in severity.METRIC_NAMES:
             result = getattr(self, metric)
+            if result is None:          # experimental metric not computed
+                continue
             level = severity.severity(result)
             if level == severity.OK:
                 continue
@@ -412,7 +462,16 @@ class AuditReport:
                 f"[{'CRITICAL' if level == severity.BAD else 'WARNING'}]",
                 "─" * 40,
             ]
-            if level == severity.WARN:
+            if metric in severity.EXPERIMENTAL_METRICS:
+                lines.append(
+                    "Experimental metric: measures a real geometric property, "
+                    "but its link to"
+                )
+                lines.append(
+                    "retrieval quality is unverified. Treat as a lead, not a "
+                    "diagnosis."
+                )
+            elif level == severity.WARN:
                 lines.append(
                     "Borderline reading, not an active failure — worth "
                     "watching rather than fixing today."
@@ -613,16 +672,20 @@ class AuditReport:
                 "participation_ratio": self.dimensionality.participation_ratio,
                 "variance_threshold": self.dimensionality.variance_threshold,
                 "interpretation": self.dimensionality.interpretation,
-            },
-            "density": {
+            }
+        }
+
+        if self.density is not None:
+            data["density"] = {
                 "cv": self.density.cv,
                 "mean_knn_distance": self.density.mean_knn_distance,
                 "std_knn_distance": self.density.std_knn_distance,
                 "n_outliers": self.density.n_outliers,
                 "interpretation": self.density.interpretation,
                 "k": self.density.k,
-            },
-            "sensitivity": {
+            }
+        if self.sensitivity is not None:
+            data["sensitivity"] = {
                 "mean_stability": self.sensitivity.mean_stability,
                 "n_brittle": self.sensitivity.n_brittle,
                 "brittle_fraction": self.sensitivity.brittle_fraction,
@@ -630,22 +693,22 @@ class AuditReport:
                 "interpretation": self.sensitivity.interpretation,
                 "k": self.sensitivity.k,
                 "m": self.sensitivity.m,
-            },
-            "intrinsic_dim": {
+            }
+        if self.intrinsic_dim is not None:
+            data["intrinsic_dim"] = {
                 "d_int": self.intrinsic_dim.d_int,
                 "r_squared": self.intrinsic_dim.r_squared,
                 "interpretation": self.intrinsic_dim.interpretation,
                 "trim_fraction": self.intrinsic_dim.trim_fraction,
                 "n_points_used": self.intrinsic_dim.n_points_used,
-            },
-        }
+            }
 
         with open(path, "w") as f:
             json.dump(data, f, indent=2)
 
         print(f"Audit results exported to {path}")
 
-# ── Plot ───────────────────────────────────────────────────────────────────
+    # ── Plot ───────────────────────────────────────────────────────────────
 
     def plot(
         self,

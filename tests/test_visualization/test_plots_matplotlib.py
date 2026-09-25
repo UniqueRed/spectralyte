@@ -29,7 +29,8 @@ def report():
     rng = np.random.RandomState(42)
     embeddings = rng.randn(200, 64)
     audit = Spectralyte(embeddings, k=5, random_seed=42)
-    return audit.run(verbose=False)
+    # Plot tests cover every metric's figure, including the experimental ones.
+    return audit.run(verbose=False, experimental=True)
 
 
 # ── Individual plot return type tests ─────────────────────────────────────────
@@ -313,7 +314,7 @@ def test_plots_work_with_minimal_embeddings():
     rng = np.random.RandomState(0)
     embeddings = rng.randn(20, 16)
     audit = Spectralyte(embeddings, k=3, random_seed=0)
-    report = audit.run(verbose=False)
+    report = audit.run(verbose=False, experimental=True)
 
     for fn in [plot_anisotropy, plot_dimensionality, plot_density,
                plot_sensitivity, plot_intrinsic_dim, plot_summary]:
@@ -326,6 +327,6 @@ def test_plots_work_with_high_dimensional_embeddings():
     rng = np.random.RandomState(0)
     embeddings = rng.randn(100, 512)
     audit = Spectralyte(embeddings, k=5, random_seed=0)
-    report = audit.run(verbose=False)
+    report = audit.run(verbose=False, experimental=True)
     fig = plot_summary(report, show=False)
     assert fig is not None

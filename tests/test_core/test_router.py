@@ -50,7 +50,8 @@ def stable_embeddings(embedding_dim):
 def audit_and_router(stable_embeddings):
     """Full audit and router built from stable embeddings."""
     audit = Spectralyte(stable_embeddings, k=5, random_seed=42)
-    report = audit.run(verbose=False)
+    # The router is built from density and sensitivity, both experimental.
+    report = audit.run(verbose=False, experimental=True)
     router = audit.get_router()
     return audit, report, router, stable_embeddings
 

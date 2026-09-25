@@ -543,17 +543,24 @@ def plot_summary(
     mpl, plt, mpatches = _require_matplotlib()
 
     # ── Normalize health scores to [0, 1] where 1 = healthy ───────────────────
-    aniso_health    = max(0.0, 1.0 - report.anisotropy.score)
-    dim_health      = min(1.0, report.dimensionality.utilization / 0.20)
-    density_health  = max(0.0, 1.0 - min(report.density.cv, 1.0))
-    stability_health = report.sensitivity.mean_stability
-    id_ratio = report.intrinsic_dim.d_int / max(report.intrinsic_dim.n_dims, 1)
-    intrinsic_health = min(1.0, max(0.0, 1.0 - abs(id_ratio - 0.10) / 0.10))
+    # Only the measured metrics get an axis; the experimental three are absent
+    # unless the audit ran with experimental=True.
+    health_scores = [
+        max(0.0, 1.0 - report.anisotropy.score),
+        min(1.0, report.dimensionality.utilization / 0.20),
+    ]
+    categories = ["Anisotropy", "Dimensionality"]
 
-    health_scores = [aniso_health, dim_health, density_health,
-                     stability_health, intrinsic_health]
-    categories = ["Anisotropy", "Dimensionality", "Density",
-                  "Stability", "Intrinsic Dim"]
+    if report.density is not None:
+        health_scores.append(max(0.0, 1.0 - min(report.density.cv, 1.0)))
+        categories.append("Density")
+    if report.sensitivity is not None:
+        health_scores.append(report.sensitivity.mean_stability)
+        categories.append("Stability")
+    if report.intrinsic_dim is not None:
+        id_ratio = report.intrinsic_dim.d_int / max(report.intrinsic_dim.n_dims, 1)
+        health_scores.append(min(1.0, max(0.0, 1.0 - abs(id_ratio - 0.10) / 0.10)))
+        categories.append("Intrinsic Dim")
 
     overall = float(np.mean(health_scores))
 
@@ -618,19 +625,22 @@ def plot_summary(
              f"{report.dimensionality.effective_dims} / {report.dimensionality.nominal_dims}  ({report.dimensionality.utilization:.1%})",
              _severity_label(report.dimensionality),
              report.dimensionality],
-            ["Density CV",
-             f"{report.density.cv:.3f}",
-             _severity_label(report.density),
-             report.density],
-            ["Retrieval Stability",
-             f"{report.sensitivity.mean_stability:.3f}",
-             _severity_label(report.sensitivity),
-             report.sensitivity],
-            ["Intrinsic Dimension",
-             f"{report.intrinsic_dim.d_int:.1f}  (R²={report.intrinsic_dim.r_squared:.2f})",
-             _severity_label(report.intrinsic_dim),
-             report.intrinsic_dim],
         ]
+        if report.density is not None:
+            rows.append(["Density CV *",
+                         f"{report.density.cv:.3f}",
+                         _severity_label(report.density),
+                         report.density])
+        if report.sensitivity is not None:
+            rows.append(["Retrieval Stability *",
+                         f"{report.sensitivity.mean_stability:.3f}",
+                         _severity_label(report.sensitivity),
+                         report.sensitivity])
+        if report.intrinsic_dim is not None:
+            rows.append(["Intrinsic Dimension *",
+                         f"{report.intrinsic_dim.d_int:.1f}  (R²={report.intrinsic_dim.r_squared:.2f})",
+                         _severity_label(report.intrinsic_dim),
+                         report.intrinsic_dim])
 
         col_labels = ["Metric", "Value", "Status"]
         table_data = [[r[0], r[1], r[2]] for r in rows]
@@ -713,14 +723,22 @@ def plot_all(
             return os.path.join(save_dir, f"spectralyte_{name}.png")
         return None
 
-    return {
+    # Only plot what the report carries: the experimental metrics are absent
+    # unless the audit ran with experimental=True.
+    figures = {
         "summary":        plot_summary(report, show=show, save_path=save_path("summary")),
         "anisotropy":     plot_anisotropy(report, show=show, save_path=save_path("anisotropy")),
         "dimensionality": plot_dimensionality(report, show=show, save_path=save_path("dimensionality")),
-        "density":        plot_density(report, show=show, save_path=save_path("density")),
-        "sensitivity":    plot_sensitivity(report, show=show, save_path=save_path("sensitivity")),
-        "intrinsic_dim":  plot_intrinsic_dim(report, show=show, save_path=save_path("intrinsic_dim")),
     }
+    optional = {
+        "density": plot_density,
+        "sensitivity": plot_sensitivity,
+        "intrinsic_dim": plot_intrinsic_dim,
+    }
+    for name, fn in optional.items():
+        if getattr(report, name) is not None:
+            figures[name] = fn(report, show=show, save_path=save_path(name))
+    return figures
 
 
 # ── Private helpers ────────────────────────────────────────────────────────────

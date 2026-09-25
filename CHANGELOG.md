@@ -1,5 +1,44 @@
 # Changelog
 
+## v0.4.0 (2026-09-25)
+
+Spectralyte now ships what the benchmark validated and makes the rest opt-in.
+
+### Changed
+- **The default audit computes two metrics, not five.** Anisotropy and
+  effective dimensionality are the pair that predicted, on 6/6 dataset-model
+  pairs, whether a correction transform would help retrieval. Density,
+  retrieval sensitivity and intrinsic dimensionality measure real geometric
+  properties but none has a demonstrated link to retrieval quality, so they are
+  now computed only via `run(experimental=True)` / `--experimental`.
+
+  They also dominated the runtime: on 5000x384 the default audit is **3.2x
+  faster** (7.0s vs 22.4s).
+- **Only core metrics decide the verdict.** `n_issues` and `needs_transform`
+  ignore the experimental metrics entirely, so an unvalidated signal can no
+  longer raise a false alarm on a healthy index. Experimental findings surface
+  separately via `experimental_findings`, in their own block in `summary()`,
+  and tagged as leads rather than diagnoses in `fix_plan()`.
+- `has_brittle_zones` returns `None` when sensitivity was not computed. `None`
+  means unmeasured, not "no" — returning `False` would assert something never
+  checked.
+- `export()` and `audit --json` omit experimental sections when absent rather
+  than emitting nulls a CI gate might misread. The two payloads are still
+  asserted identical by the test suite.
+- `plot()` renders only the metrics the report carries.
+
+### Added
+- `AuditReport.experimental_findings`, `.has_experimental`, `.measured_metrics`.
+- `severity.CORE_METRICS` and `severity.EXPERIMENTAL_METRICS`.
+
+### Notes
+- `get_router()` now requires `run(experimental=True)`, since the router is
+  built from density and sensitivity. It raises with that instruction rather
+  than failing obscurely.
+- Nothing was deleted. Every metric, the router and all their tests remain;
+  they are opt-in rather than default. The full five-metric release is tagged
+  `v0.3.0` and branched as `v0.3-full`.
+
 ## v0.3.0 (2026-09-23)
 
 ### Added

@@ -41,8 +41,14 @@ def audit(small_embeddings):
 
 @pytest.fixture
 def report(audit):
-    """Pre-computed audit report."""
+    """Pre-computed audit report — core metrics only, as in normal use."""
     return audit.run(verbose=False)
+
+
+@pytest.fixture
+def full_report(audit):
+    """Audit report including the opt-in experimental metrics."""
+    return audit.run(verbose=False, experimental=True)
 
 
 # ── Spectralyte initialization tests ──────────────────────────────────────────
@@ -88,13 +94,41 @@ def test_run_returns_audit_report(report):
     assert isinstance(report, AuditReport)
 
 
-def test_run_has_all_five_metrics(report):
-    """AuditReport must have all five metric results."""
+def test_run_computes_core_metrics_only_by_default(report):
+    """
+    The default audit carries the two validated metrics and nothing else.
+
+    The experimental three are off by default: they measure real geometry but
+    none has a demonstrated link to retrieval quality, and two of them dominate
+    the runtime.
+    """
     assert report.anisotropy is not None
     assert report.dimensionality is not None
-    assert report.density is not None
-    assert report.sensitivity is not None
-    assert report.intrinsic_dim is not None
+    assert report.density is None
+    assert report.sensitivity is None
+    assert report.intrinsic_dim is None
+    assert report.measured_metrics == ("anisotropy", "dimensionality")
+    assert not report.has_experimental
+
+
+def test_run_experimental_adds_the_other_three(full_report):
+    """experimental=True fills in the opt-in metrics."""
+    assert full_report.density is not None
+    assert full_report.sensitivity is not None
+    assert full_report.intrinsic_dim is not None
+    assert full_report.has_experimental
+    assert len(full_report.measured_metrics) == 5
+
+
+def test_experimental_metrics_do_not_affect_the_verdict(audit):
+    """
+    Adding the experimental metrics must not change n_issues or
+    needs_transform. They inform; they do not judge.
+    """
+    core = audit.run(verbose=False)
+    full = audit.run(verbose=False, experimental=True)
+    assert core.n_issues == full.n_issues
+    assert core.needs_transform == full.needs_transform
 
 
 def test_run_embeddings_shape_correct(report, small_embeddings):
@@ -113,19 +147,19 @@ def test_run_effective_dims_bounded(report, small_embeddings):
     assert 1 <= report.dimensionality.effective_dims <= d
 
 
-def test_run_density_cv_non_negative(report):
+def test_run_density_cv_non_negative(full_report):
     """Density CV must be non-negative."""
-    assert report.density.cv >= 0.0
+    assert full_report.density.cv >= 0.0
 
 
-def test_run_stability_bounded(report):
+def test_run_stability_bounded(full_report):
     """Mean stability must be in [0, 1]."""
-    assert 0.0 <= report.sensitivity.mean_stability <= 1.0
+    assert 0.0 <= full_report.sensitivity.mean_stability <= 1.0
 
 
-def test_run_intrinsic_dim_positive(report):
+def test_run_intrinsic_dim_positive(full_report):
     """Intrinsic dimensionality must be positive."""
-    assert report.intrinsic_dim.d_int >= 1.0
+    assert full_report.intrinsic_dim.d_int >= 1.0
 
 
 def test_run_with_alternate_embeddings(audit):
@@ -140,8 +174,8 @@ def test_run_reproducible(small_embeddings):
     """Same seed should produce identical results."""
     audit1 = Spectralyte(small_embeddings, random_seed=42)
     audit2 = Spectralyte(small_embeddings, random_seed=42)
-    r1 = audit1.run(verbose=False)
-    r2 = audit2.run(verbose=False)
+    r1 = audit1.run(verbose=False, experimental=True)
+    r2 = audit2.run(verbose=False, experimental=True)
     assert r1.anisotropy.score == r2.anisotropy.score
     assert r1.sensitivity.mean_stability == r2.sensitivity.mean_stability
 
@@ -163,17 +197,17 @@ def test_needs_transform_is_bool(report):
     assert isinstance(report.needs_transform, bool)
 
 
-def test_has_brittle_zones_is_bool(report):
+def test_has_brittle_zones_is_bool(full_report):
     """has_brittle_zones must be a boolean."""
-    assert isinstance(report.has_brittle_zones, bool)
+    assert isinstance(full_report.has_brittle_zones, bool)
 
 
-def test_has_brittle_zones_consistent(report):
+def test_has_brittle_zones_consistent(full_report):
     """has_brittle_zones must be consistent with n_brittle."""
-    if report.sensitivity.n_brittle > 0:
-        assert report.has_brittle_zones is True
+    if full_report.sensitivity.n_brittle > 0:
+        assert full_report.has_brittle_zones is True
     else:
-        assert report.has_brittle_zones is False
+        assert full_report.has_brittle_zones is False
 
 
 # ── summary() tests ────────────────────────────────────────────────────────────
@@ -185,9 +219,9 @@ def test_summary_runs_without_error(report, capsys):
     assert "Spectralyte Audit Report" in captured.out
 
 
-def test_summary_contains_all_metrics(report, capsys):
+def test_summary_contains_all_metrics(full_report, capsys):
     """summary() output must mention all five metrics."""
-    report.summary(use_color=False)
+    full_report.summary(use_color=False)
     captured = capsys.readouterr()
     assert "Anisotropy" in captured.out
     assert "Effective Dimensions" in captured.out
@@ -258,12 +292,12 @@ def test_export_produces_valid_json(report):
         os.unlink(path)
 
 
-def test_export_contains_all_metrics(report):
+def test_export_contains_all_metrics(full_report):
     """Exported JSON must contain all five metric sections."""
     with tempfile.NamedTemporaryFile(suffix=".json", delete=False, mode='w') as f:
         path = f.name
     try:
-        report.export(path)
+        full_report.export(path)
         with open(path) as f:
             data = json.load(f)
         assert "anisotropy" in data
@@ -275,17 +309,17 @@ def test_export_contains_all_metrics(report):
         os.unlink(path)
 
 
-def test_export_scores_match_report(report):
-    """Exported scores must match the in-memory report."""
+def test_export_scores_match_report(full_report):
+    """Exported scores must match the in-memory full_report."""
     with tempfile.NamedTemporaryFile(suffix=".json", delete=False, mode='w') as f:
         path = f.name
     try:
-        report.export(path)
+        full_report.export(path)
         with open(path) as f:
             data = json.load(f)
-        assert abs(data["anisotropy"]["score"] - report.anisotropy.score) < 1e-10
-        assert data["dimensionality"]["effective_dims"] == report.dimensionality.effective_dims
-        assert abs(data["density"]["cv"] - report.density.cv) < 1e-10
+        assert abs(data["anisotropy"]["score"] - full_report.anisotropy.score) < 1e-10
+        assert data["dimensionality"]["effective_dims"] == full_report.dimensionality.effective_dims
+        assert abs(data["density"]["cv"] - full_report.density.cv) < 1e-10
     finally:
         os.unlink(path)
 
@@ -355,7 +389,7 @@ def test_get_router_requires_run_first(small_embeddings):
         audit.get_router()
 
 
-def test_get_router_returns_router(audit, report):
+def test_get_router_returns_router(audit, full_report):
     """get_router() must return a Router instance."""
     from spectralyte.core.router import Router
     router = audit.get_router()
@@ -440,7 +474,8 @@ def test_fix_plan_covers_collapsed_manifold(collapsed_embeddings):
     A collapsed manifold is the most serious finding Spectralyte makes and
     must produce guidance, not silence. It previously had no branch at all.
     """
-    report = Spectralyte(collapsed_embeddings, k=5, random_seed=42).run(verbose=False)
+    report = Spectralyte(collapsed_embeddings, k=5, random_seed=42).run(
+        verbose=False, experimental=True)
     # Graded WARN rather than BAD since the benchmark found the label carries
     # no retrieval-predictive power, but it must still produce guidance.
     assert severity.severity(report.intrinsic_dim) == severity.WARN
@@ -452,17 +487,27 @@ def test_fix_plan_covers_collapsed_manifold(collapsed_embeddings):
 
 
 def test_fix_plan_distinguishes_warn_from_bad(collapsed_embeddings):
-    """Sections are tagged by severity so a borderline reading is not
-    presented with the same urgency as an active failure."""
-    report = Spectralyte(collapsed_embeddings, k=5, random_seed=42).run(verbose=False)
+    """
+    Sections are tagged by severity so a borderline reading is not presented
+    with the same urgency as an active failure, and an experimental metric is
+    not presented as a diagnosis at all.
+    """
+    report = Spectralyte(collapsed_embeddings, k=5, random_seed=42).run(
+        verbose=False, experimental=True)
     plan = report.fix_plan()
 
-    levels = [severity.severity(getattr(report, m)) for m in severity.METRIC_NAMES]
-    if severity.BAD in levels:
+    core_levels = [severity.severity(getattr(report, m))
+                   for m in severity.CORE_METRICS]
+    exp_levels = [severity.severity(getattr(report, m))
+                  for m in severity.EXPERIMENTAL_METRICS]
+
+    if severity.BAD in core_levels + exp_levels:
         assert "[CRITICAL]" in plan
-    if severity.WARN in levels:
-        assert "[WARNING]" in plan
+    if severity.WARN in core_levels:
         assert "Borderline reading" in plan
+    if any(lvl != severity.OK for lvl in exp_levels):
+        # Flagged experimental metrics are labelled as leads, not verdicts.
+        assert "Experimental metric" in plan
 
 
 def test_fix_plan_healthy_report_has_no_sections():
