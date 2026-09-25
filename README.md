@@ -417,6 +417,40 @@ Model comparison output:
 
 ---
 
+## Does it actually work?
+
+`benchmarks/retrieval_benchmark.py` tests the premise directly — that bad
+geometry hurts retrieval and these transforms fix it — on two BEIR datasets
+crossed with three encoders, scored by nDCG@10 against human relevance
+judgments.
+
+`needs_transform` agreed with the measured outcome on **6/6 dataset-model
+pairs**:
+
+| dataset | encoder | nDCG@10 | `needs_transform` | after whitening |
+|---|---|---|---|---|
+| SciFact | all-mpnet-base-v2 | 0.6557 | no | 0.6326 (−0.023) |
+| SciFact | all-MiniLM-L6-v2 | 0.6451 | no | 0.5862 (−0.059) |
+| SciFact | **gpt2 mean-pooled** | 0.0284 | **yes** | **0.3185 (+0.290)** |
+| NFCorpus | all-mpnet-base-v2 | 0.3347 | no | 0.2302 (−0.105) |
+| NFCorpus | all-MiniLM-L6-v2 | 0.3177 | no | 0.2491 (−0.069) |
+| NFCorpus | **gpt2 mean-pooled** | 0.0148 | **yes** | **0.0634 (+0.049)** |
+
+On a genuinely pathological space, whitening lifted nDCG@10 by **11.2x**
+(SciFact) and **4.3x** (NFCorpus). On every healthy space every transform made
+retrieval *worse* — so Spectralyte declining to recommend one matters as much
+as it recommending one.
+
+The MiniLM/SciFact baseline matches the published BEIR figure (~0.645), so the
+harness is comparable to the literature.
+
+**Read the caveats** in [`benchmarks/README.md`](benchmarks/README.md): two
+datasets and one clearly-pathological encoder is a small sample, `density`,
+`sensitivity` and `intrinsic_dim` are not validated by it, and you should still
+check against your own retrieval metric before mutating a production index.
+
+---
+
 ## Roadmap
 
 - [x] Anisotropy metric

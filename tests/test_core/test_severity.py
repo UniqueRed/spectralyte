@@ -40,7 +40,7 @@ from spectralyte.core.severity import OK, WARN, BAD, severity_of
     ("intrinsic_dim", "very_high", OK),
     ("intrinsic_dim", "high", OK),
     ("intrinsic_dim", "moderate", OK),
-    ("intrinsic_dim", "low", BAD),
+    ("intrinsic_dim", "low", WARN),
 ])
 def test_severity_of(metric, label, expected):
     assert severity_of(metric, label) == expected
@@ -48,15 +48,17 @@ def test_severity_of(metric, label, expected):
 
 # ── The collisions that made a global label set unworkable ─────────────────────
 
-def test_low_is_bad_for_both_metrics_that_emit_it():
+def test_low_is_never_healthy_for_either_metric_that_emits_it():
     """
-    Regression: "low" was in a shared healthy set.
+    Regression: "low" was in a shared healthy set, so both metrics that emit
+    it read as fine — an under-utilized space and a collapsed manifold.
 
-    Both metrics that emit it mean something unhealthy — an under-utilized
-    space (dimensionality) and a collapsed manifold (intrinsic_dim).
+    They are graded differently now, which is the point: the same label means
+    different things depending on which metric produced it. Neither is OK.
     """
     assert severity_of("dimensionality", "low") == BAD
-    assert severity_of("intrinsic_dim", "low") == BAD
+    assert severity_of("intrinsic_dim", "low") == WARN
+    assert severity_of("intrinsic_dim", "low") != OK
 
 
 def test_severe_is_bad_for_both_metrics_that_emit_it():

@@ -8,6 +8,13 @@
   `report.export()` on clean stdout, so it composes with `jq` and CI gates.
 
 ### Added
+- `benchmarks/retrieval_benchmark.py` — the validation this library was missing.
+  Two BEIR datasets (SciFact, NFCorpus) crossed with three encoders, scored by
+  nDCG@10 against human relevance judgments. `needs_transform` agreed with the
+  measured outcome on 6/6 dataset-model pairs: whitening lifted nDCG@10 11.2x on
+  mean-pooled GPT-2 / SciFact (0.028 to 0.319) and 4.3x on NFCorpus, while every
+  transform hurt every healthy encoder. The MiniLM/SciFact baseline reproduces
+  the published BEIR figure. Caveats in `benchmarks/README.md`.
 - `spectralyte.core.transform.FittedTransform`, the fitted parameters as an
   object that outlives the auditor, with `save()` / `load()`. Stored as plain
   arrays via `numpy.savez` — no pickle, so loading a transform produced
@@ -20,8 +27,24 @@
   across dimensions, derived from the dimensionality spectrum at no extra cost.
 
 ### Changed
-- **Whitening now floors covariance eigenvalues relative to the largest**
-  (`whiten_rcond`, default 0.01) rather than at an absolute `1e-10`. Whitening
+- **`whiten_rcond` default is 1e-4, set by benchmark rather than by intuition.**
+  An earlier 0.01, chosen from synthetic fixtures, damped far too hard: it
+  captured +0.047 nDCG@10 of an available +0.290 on SciFact and +0.001 of
+  +0.049 on NFCorpus. Both pathological cases peak at exactly 1e-4.
+- **`needs_transform` now requires a BAD grade rather than merely WARN.** Firing
+  on `moderate` anisotropy advised transforms that cost 0.07-0.10 nDCG@10 on two
+  healthy encoders. Requiring BAD took the advice from 4/6 to 6/6 correct.
+- **`intrinsic_dim` "low" is graded WARN, not BAD.** Every real space measured
+  reports "low", including encoders at nDCG@10 0.656, and mean-pooled GPT-2
+  scores a *higher* intrinsic dimension than either sentence encoder. The label
+  showed no retrieval-predictive power, so it no longer drives `n_issues` or
+  `needs_transform` on its own. Genuine collapse still trips `dimensionality`.
+- **Removed the condition-number heuristic that steered ill-conditioned spaces
+  to ABTT.** Real embedding spaces all have enormous condition numbers (6.9e34
+  to 3.8e38 for healthy encoders), so the threshold fired on every space and
+  discriminated nothing — and whitening beat ABTT on both cases that mattered.
+- **Whitening floors covariance eigenvalues relative to the largest**
+  rather than at an absolute `1e-10`. Whitening
   scales each direction by `lambda^-1/2`, so an absolute floor let a near-null
   direction be amplified roughly 1e5x — drowning the signal in noise. Measured
   on a corpus with condition number 2.6e6, recall@1 went from 1.00 unmodified

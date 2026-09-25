@@ -46,7 +46,9 @@ class Spectralyte:
     whiten_rcond : float
         Relative floor for covariance eigenvalues during whitening, as a
         fraction of the largest eigenvalue. Directions below it are damped
-        rather than inflated. Default 0.01.
+        rather than inflated. Default 1e-4, chosen by sweeping this value
+        against nDCG@10 on SciFact and NFCorpus: retrieval on a pathological
+        space peaked at 1e-4 on both, and fell off sharply by 1e-2.
 
         This matters more than it looks. Whitening rescales every direction
         to equal variance, so on an ill-conditioned space a near-null
@@ -76,7 +78,7 @@ class Spectralyte:
         sensitivity_epsilon: float = 0.05,
         sensitivity_m: int = 5,
         variance_threshold: float = 0.95,
-        whiten_rcond: float = 1e-2,
+        whiten_rcond: float = 1e-4,
         sample_size: Optional[int] = None,
         random_seed: int = 42,
     ) -> None:

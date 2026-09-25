@@ -53,3 +53,7 @@ spec/
 
 # Generated audit output
 spectralyte_audit.json
+
+# Benchmark artifacts
+.benchmark_cache/
+benchmark_results.json

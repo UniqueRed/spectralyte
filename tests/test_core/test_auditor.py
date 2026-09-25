@@ -441,7 +441,9 @@ def test_fix_plan_covers_collapsed_manifold(collapsed_embeddings):
     must produce guidance, not silence. It previously had no branch at all.
     """
     report = Spectralyte(collapsed_embeddings, k=5, random_seed=42).run(verbose=False)
-    assert severity.severity(report.intrinsic_dim) == severity.BAD
+    # Graded WARN rather than BAD since the benchmark found the label carries
+    # no retrieval-predictive power, but it must still produce guidance.
+    assert severity.severity(report.intrinsic_dim) == severity.WARN
 
     plan = report.fix_plan()
     assert "Collapsed Manifold" in plan
@@ -515,18 +517,21 @@ def test_fix_plan_recommends_whitening_when_well_conditioned():
     assert "Recommending ABTT" not in plan
 
 
-def test_fix_plan_recommends_abtt_when_ill_conditioned():
+def test_fix_plan_recommends_whitening_regardless_of_conditioning():
     """
-    Whitening a near-degenerate space amplifies its weakest directions and
-    can make retrieval worse than doing nothing, so the plan must not
-    recommend it there.
+    An earlier heuristic steered ill-conditioned spaces to ABTT. Benchmarking
+    killed it: real embedding spaces all have enormous condition numbers
+    (6.9e34 to 3.8e38 for healthy sentence encoders), so the threshold fired
+    on every space and discriminated nothing — and whitening beat ABTT on both
+    pathological cases anyway (nDCG@10 0.319 vs 0.274 on SciFact, 0.063 vs
+    0.059 on NFCorpus).
     """
     rng = np.random.RandomState(42)
     report = Spectralyte(_anisotropic(rng, "ill"), k=5, random_seed=42).run(verbose=False)
 
+    assert report.condition_number > 1e4        # would have tripped the old steer
     assert severity.severity(report.anisotropy) != severity.OK
+
     plan = report.fix_plan()
-    assert "strategy='abtt'" in plan
-    assert "strategy='whiten'" not in plan
-    assert "Recommending ABTT" in plan
-    assert "whiten_rcond" in plan          # the escape hatch is still offered
+    assert "strategy='whiten'" in plan
+    assert "Recommending ABTT" not in plan

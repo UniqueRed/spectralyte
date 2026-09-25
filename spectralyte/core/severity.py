@@ -43,9 +43,18 @@ _SEVERITY: dict[str, dict[str, str]] = {
     "sensitivity": {
         "stable": OK, "moderate": WARN, "sensitive": BAD, "brittle": BAD,
     },
-    # Inverted polarity: only a collapsed manifold ("low") is a problem.
+    # Inverted polarity: a *low* ratio is the unhealthy end, not the high one.
+    #
+    # Graded WARN rather than BAD on benchmark evidence. Across SciFact and
+    # NFCorpus with three encoders, every space measured "low" — including
+    # all-mpnet-base-v2 at nDCG@10 0.656 — and mean-pooled GPT-2 (nDCG@10
+    # 0.028) scored a *higher* intrinsic dimension than either sentence
+    # encoder. The label carries real information about manifold structure but
+    # showed no retrieval-predictive power, so it should not on its own drive
+    # n_issues or needs_transform. A genuinely collapsed space also trips
+    # `dimensionality`, which does grade BAD.
     "intrinsic_dim": {
-        "very_high": OK, "high": OK, "moderate": OK, "low": BAD,
+        "very_high": OK, "high": OK, "moderate": OK, "low": WARN,
     },
 }
 

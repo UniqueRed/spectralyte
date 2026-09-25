@@ -269,13 +269,15 @@ def test_severity_color_severe():
 
 def test_severity_color_low_is_metric_dependent():
     """
-    Regression: "low" is emitted by two metrics and is unhealthy for both.
+    Regression: "low" is emitted by two metrics and is healthy for neither.
 
     It previously sat in a shared "healthy" set, painting a collapsed manifold
-    and an under-utilized space green.
+    and an under-utilized space green. The two are graded differently — low
+    utilization is critical, a low intrinsic dimension only a warning — so the
+    colors differ, but neither is the healthy one.
     """
     assert _severity_color(_Res("dimensionality", "low")) == "#DC2626"
-    assert _severity_color(_Res("intrinsic_dim", "low")) == "#DC2626"
+    assert _severity_color(_Res("intrinsic_dim", "low")) == "#D97706"
 
 
 def test_severity_color_intrinsic_dim_polarity_inverted():

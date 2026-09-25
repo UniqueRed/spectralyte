@@ -185,7 +185,7 @@ class FittedTransform:
 def fit(
     embeddings: np.ndarray,
     effective_dims: int,
-    whiten_rcond: float = 1e-2,
+    whiten_rcond: float = 1e-4,
 ) -> FittedTransform:
     """
     Fit the transform parameters on a corpus.
