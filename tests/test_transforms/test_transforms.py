@@ -58,6 +58,19 @@ def anisotropic_embeddings():
 
 
 @pytest.fixture
+def well_conditioned_embeddings():
+    """
+    Anisotropic (a shared dominant direction) but with an even covariance
+    spectrum, so whitening is safe and the rcond floor never engages.
+    """
+    rng = np.random.RandomState(17)
+    base = rng.randn(300, 32)
+    direction = rng.randn(32)
+    direction /= np.linalg.norm(direction)
+    return base + direction * 5.0
+
+
+@pytest.fixture
 def audit(anisotropic_embeddings):
     """Spectralyte instance with a completed audit."""
     a = Spectralyte(anisotropic_embeddings, k=5, random_seed=42)
@@ -84,13 +97,20 @@ def test_whiten_rows_are_unit_norm(audit, anisotropic_embeddings):
     assert np.allclose(norms, 1.0, atol=1e-6)
 
 
-def test_whiten_decorrelates_dimensions(audit, anisotropic_embeddings):
+def test_whiten_decorrelates_dimensions(well_conditioned_embeddings):
     """
     Whitening drives the covariance toward identity, so off-diagonal
     covariance must be far smaller than the diagonal.
+
+    Measured on a well-conditioned corpus, where full whitening is safe and
+    the rcond floor never engages. On an ill-conditioned one the floor
+    deliberately leaves the damped directions un-whitened — see
+    test_whiten_damping_is_inert_when_well_conditioned and
+    test_whiten_damping_protects_ill_conditioned_spaces.
     """
-    out = audit.transform(anisotropic_embeddings, strategy="whiten")
-    cov = np.cov(_centered(out), rowvar=False)
+    a = Spectralyte(well_conditioned_embeddings, k=5, random_seed=42)
+    a.run(verbose=False)
+    cov = np.cov(_centered(a.transform(strategy="whiten")), rowvar=False)
 
     diag = np.abs(np.diag(cov)).mean()
     off = np.abs(cov - np.diag(np.diag(cov))).mean()
@@ -372,3 +392,155 @@ def test_queries_and_corpus_stay_in_one_space(strategy):
 
     hits = np.argmax(_unit(q_out) @ _unit(corpus_out).T, axis=1)
     assert (hits == idx).mean() >= 0.9
+
+
+# ── Whitening damping (whiten_rcond) ───────────────────────────────────────────
+#
+# Whitening multiplies each direction by lambda^(-1/2). With an absolute
+# eigenvalue floor, a near-null direction on a realistic embedding spectrum got
+# amplified ~1e5x, so query noise swamped the signal: measured recall@1 fell
+# from 1.00 raw to 0.00 whitened on a corpus with condition number 2.6e6. A
+# relative floor bounds the gain at rcond^(-1/2).
+
+def test_whiten_damping_is_inert_when_well_conditioned(well_conditioned_embeddings):
+    """
+    The floor must not tax the common case. On an even spectrum nothing sits
+    below it, so the result matches an effectively unfloored whitening.
+    """
+    damped = Spectralyte(well_conditioned_embeddings, k=5, random_seed=42,
+                         whiten_rcond=1e-2)
+    damped.run(verbose=False)
+
+    loose = Spectralyte(well_conditioned_embeddings, k=5, random_seed=42,
+                        whiten_rcond=1e-12)
+    loose.run(verbose=False)
+
+    assert np.allclose(damped.transform(strategy="whiten"),
+                       loose.transform(strategy="whiten"), atol=1e-6)
+
+
+def test_whiten_damping_protects_ill_conditioned_spaces():
+    """
+    The case the default exists for: a skewed spectrum plus query noise.
+    Without a relative floor, retrieval collapses; with one, it survives.
+    """
+    rng = np.random.RandomState(42)
+    corpus = (rng.randn(400, 32) * np.logspace(0, -2, 32)) @ rng.randn(32, 32)
+    direction = rng.randn(32)
+    direction /= np.linalg.norm(direction)
+    corpus = corpus + direction * np.abs(corpus).mean() * 20.0
+
+    qr = np.random.RandomState(4)
+    idx = np.arange(0, 120, 3)
+    queries = corpus[idx] + qr.randn(len(idx), 32) * 0.2
+
+    def _unit(x):
+        return x / np.linalg.norm(x, axis=1, keepdims=True)
+
+    def recall(rcond):
+        a = Spectralyte(corpus, k=5, random_seed=42, whiten_rcond=rcond)
+        a.run(verbose=False)
+        C = a.transform(strategy="whiten")
+        Q = np.vstack([a.transform(q, strategy="whiten") for q in queries])
+        return float((np.argmax(_unit(Q) @ _unit(C).T, axis=1) == idx).mean())
+
+    assert recall(1e-12) < 0.5      # an absolute-style floor destroys it
+    assert recall(1e-2) > 0.9       # the default keeps it intact
+
+
+def test_whiten_damping_bounds_the_amplification():
+    """
+    The floor caps the gain applied to the weakest direction, which is the
+    mechanism behind the retrieval result above.
+    """
+    rng = np.random.RandomState(42)
+    corpus = (rng.randn(300, 24) * np.logspace(0, -3, 24)) @ rng.randn(24, 24)
+
+    a = Spectralyte(corpus, k=5, random_seed=42, whiten_rcond=1e-2)
+    a.run(verbose=False)
+
+    gain = np.linalg.eigvalsh(a.fitted_transform().whitening).max()
+    largest_eigenvalue = np.linalg.eigvalsh(
+        np.cov(corpus - corpus.mean(axis=0), rowvar=False)
+    ).max()
+
+    # Gain is capped at (rcond * lambda_max)^(-1/2), not lambda_min^(-1/2).
+    assert gain <= (1e-2 * largest_eigenvalue) ** -0.5 * 1.01
+
+
+# ── FittedTransform persistence ────────────────────────────────────────────────
+
+from spectralyte.core.transform import FittedTransform, FORMAT_VERSION   # noqa: E402
+
+
+@pytest.mark.parametrize("strategy", ["whiten", "abtt", "pca_reduce"])
+def test_saved_fit_reproduces_the_mapping(fitted, anisotropic_embeddings, strategy, tmp_path):
+    """A reloaded fit must map vectors exactly where the live one does."""
+    path = str(tmp_path / "fit.npz")
+    fitted.fitted_transform().save(path)
+    reloaded = FittedTransform.load(path)
+
+    assert np.allclose(
+        reloaded.apply(anisotropic_embeddings, strategy=strategy),
+        fitted.transform(anisotropic_embeddings, strategy=strategy),
+        atol=1e-6,
+    )
+
+
+def test_saved_fit_handles_single_queries(fitted, anisotropic_embeddings, tmp_path):
+    """The query-time path across a process boundary."""
+    path = str(tmp_path / "fit.npz")
+    fitted.fitted_transform().save(path)
+
+    out = FittedTransform.load(path).apply(anisotropic_embeddings[3], strategy="whiten")
+    assert out.ndim == 1
+    assert np.allclose(out, fitted.transform(strategy="whiten")[3], atol=1e-6)
+
+
+def test_saved_fit_preserves_parameters(fitted, tmp_path):
+    path = str(tmp_path / "fit.npz")
+    original = fitted.fitted_transform()
+    original.save(path)
+    reloaded = FittedTransform.load(path)
+
+    assert reloaded.effective_dims == original.effective_dims
+    assert reloaded.whiten_rcond == original.whiten_rcond
+    assert reloaded.n_dims == original.n_dims
+
+
+def test_fit_file_contains_no_pickle(fitted, tmp_path):
+    """
+    Loading a transform someone else produced must not be able to execute
+    code, so the format stays plain arrays — readable with allow_pickle=False.
+    """
+    path = str(tmp_path / "fit.npz")
+    fitted.fitted_transform().save(path)
+
+    with np.load(path, allow_pickle=False) as data:
+        assert "whitening" in data
+        assert int(data["format_version"]) == FORMAT_VERSION
+
+
+def test_incompatible_fit_version_is_rejected(fitted, tmp_path):
+    """A future format must fail loudly rather than be misread."""
+    path = str(tmp_path / "fit.npz")
+    fitted.fitted_transform().save(path)
+
+    with np.load(path) as data:
+        fields = {k: data[k] for k in data.files}
+    fields["format_version"] = np.array(FORMAT_VERSION + 1)
+    np.savez(path, **fields)
+
+    with pytest.raises(ValueError, match="format version"):
+        FittedTransform.load(path)
+
+
+def test_fitted_transform_requires_run(anisotropic_embeddings):
+    a = Spectralyte(anisotropic_embeddings, k=5, random_seed=42)
+    with pytest.raises(RuntimeError, match="run"):
+        a.fitted_transform()
+
+
+def test_fitted_transform_is_cached(fitted):
+    """Fitting is an SVD; it must happen once, not per call."""
+    assert fitted.fitted_transform() is fitted.fitted_transform()

@@ -31,6 +31,7 @@ import numpy as np
 
 from spectralyte import Spectralyte, __version__
 from spectralyte.core.report import AuditReport
+from spectralyte.core.transform import FittedTransform
 
 # ── Known constructor parameter types ─────────────────────────────────────────
 
@@ -231,12 +232,29 @@ def cmd_fix_plan(args: argparse.Namespace) -> None:
 def cmd_transform(args: argparse.Namespace) -> None:
     """Apply a geometric correction transform and save the result."""
     embeddings = _load_embeddings(args.path)
-    kwargs = _parse_config(args.config)
 
-    audit = Spectralyte(embeddings, **kwargs)
-    audit.run(verbose=False)  # required before transform()
+    if args.apply_fit:
+        # Reuse a transform fitted earlier. This is the query-time path: the
+        # corpus was corrected in a previous run, and these vectors have to go
+        # through the identical mapping to land in the same space.
+        try:
+            fit = FittedTransform.load(args.apply_fit)
+        except Exception as e:
+            print(f"Error loading transform from '{args.apply_fit}': {e}",
+                  file=sys.stderr)
+            sys.exit(1)
 
-    fixed = audit.transform(embeddings, strategy=args.strategy)
+        try:
+            fixed = fit.apply(embeddings, strategy=args.strategy)
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
+    else:
+        kwargs = _parse_config(args.config)
+        audit = Spectralyte(embeddings, **kwargs)
+        audit.run(verbose=False)  # required before transform()
+        fit = audit.fitted_transform()
+        fixed = fit.apply(embeddings, strategy=args.strategy)
 
     try:
         np.save(args.output, fixed)
@@ -249,6 +267,26 @@ def cmd_transform(args: argparse.Namespace) -> None:
         f"Saved transformed embeddings to {args.output} ({n} × {d})",
         file=sys.stderr,
     )
+
+    if args.save_fit:
+        try:
+            fit.save(args.save_fit)
+        except Exception as e:
+            print(f"Error saving transform to '{args.save_fit}': {e}",
+                  file=sys.stderr)
+            sys.exit(1)
+        print(f"Saved fitted transform to {args.save_fit}", file=sys.stderr)
+    elif not args.apply_fit:
+        # Without the fit, these vectors cannot be queried correctly: the
+        # index would be transformed and incoming queries would not be.
+        print(
+            "Note: queries must go through this same transform before "
+            "searching.\n"
+            "      Re-run with --save-fit FIT.NPZ, then apply it to queries:\n"
+            f"        spectralyte transform queries.npy --strategy {args.strategy} "
+            "--apply-fit FIT.NPZ --output q.npy",
+            file=sys.stderr,
+        )
 
 
 def cmd_version(args: argparse.Namespace) -> None:
@@ -342,6 +380,23 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         metavar="OUT.NPY",
         help="Output path for the transformed embeddings (.npy).",
+    )
+    p_tx.add_argument(
+        "--save-fit",
+        metavar="FIT.NPZ",
+        help=(
+            "Save the fitted transform so the same mapping can be applied to "
+            "queries later. Without it, a transformed index cannot be queried "
+            "correctly."
+        ),
+    )
+    p_tx.add_argument(
+        "--apply-fit",
+        metavar="FIT.NPZ",
+        help=(
+            "Apply a transform saved by --save-fit instead of fitting a new "
+            "one. Use this for query vectors."
+        ),
     )
     p_tx.add_argument(
         "--config",

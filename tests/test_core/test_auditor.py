@@ -482,3 +482,51 @@ def test_needs_transform_agrees_with_severity(collapsed_embeddings):
     expected = (not severity.is_healthy(report.anisotropy)
                 or not severity.is_healthy(report.dimensionality))
     assert report.needs_transform == expected
+
+
+# ── Conditioning-aware remediation ─────────────────────────────────────────────
+
+def _anisotropic(rng, cond="well"):
+    d = rng.randn(32)
+    d /= np.linalg.norm(d)
+    if cond == "well":
+        return rng.randn(300, 32) + d * 6.0
+    base = (rng.randn(300, 32) * np.logspace(0, -2, 32)) @ rng.randn(32, 32)
+    return base + d * np.abs(base).mean() * 20.0
+
+
+def test_condition_number_tracks_the_spectrum():
+    """condition_number must separate an even spectrum from a degenerate one."""
+    rng = np.random.RandomState(42)
+    well = Spectralyte(_anisotropic(rng, "well"), k=5, random_seed=42).run(verbose=False)
+    ill = Spectralyte(_anisotropic(rng, "ill"), k=5, random_seed=42).run(verbose=False)
+
+    assert well.condition_number < 1e3
+    assert ill.condition_number > 1e4
+
+
+def test_fix_plan_recommends_whitening_when_well_conditioned():
+    rng = np.random.RandomState(42)
+    report = Spectralyte(_anisotropic(rng, "well"), k=5, random_seed=42).run(verbose=False)
+
+    assert severity.severity(report.anisotropy) != severity.OK
+    plan = report.fix_plan()
+    assert "strategy='whiten'" in plan
+    assert "Recommending ABTT" not in plan
+
+
+def test_fix_plan_recommends_abtt_when_ill_conditioned():
+    """
+    Whitening a near-degenerate space amplifies its weakest directions and
+    can make retrieval worse than doing nothing, so the plan must not
+    recommend it there.
+    """
+    rng = np.random.RandomState(42)
+    report = Spectralyte(_anisotropic(rng, "ill"), k=5, random_seed=42).run(verbose=False)
+
+    assert severity.severity(report.anisotropy) != severity.OK
+    plan = report.fix_plan()
+    assert "strategy='abtt'" in plan
+    assert "strategy='whiten'" not in plan
+    assert "Recommending ABTT" in plan
+    assert "whiten_rcond" in plan          # the escape hatch is still offered

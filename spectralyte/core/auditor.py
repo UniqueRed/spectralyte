@@ -15,6 +15,7 @@ from typing import Optional, Literal
 
 from spectralyte.metrics import anisotropy, dimensionality, density, sensitivity, intrinsic_dim
 from spectralyte.core.report import AuditReport
+from spectralyte.core import transform as _transform
 
 
 class Spectralyte:
@@ -42,6 +43,16 @@ class Spectralyte:
     variance_threshold : float
         Cumulative variance threshold for effective dimensionality.
         Default 0.95 (95%).
+    whiten_rcond : float
+        Relative floor for covariance eigenvalues during whitening, as a
+        fraction of the largest eigenvalue. Directions below it are damped
+        rather than inflated. Default 0.01.
+
+        This matters more than it looks. Whitening rescales every direction
+        to equal variance, so on an ill-conditioned space a near-null
+        direction gets amplified by the inverse square root of a tiny
+        eigenvalue — blowing up noise and destroying retrieval. Lower the
+        value for a gentler floor, raise it to damp harder.
     sample_size : Optional[int]
         If set, subsample index for expensive metrics. If None, auto-set
         based on index size. Default None.
@@ -65,6 +76,7 @@ class Spectralyte:
         sensitivity_epsilon: float = 0.05,
         sensitivity_m: int = 5,
         variance_threshold: float = 0.95,
+        whiten_rcond: float = 1e-2,
         sample_size: Optional[int] = None,
         random_seed: int = 42,
     ) -> None:
@@ -84,6 +96,7 @@ class Spectralyte:
         self.sensitivity_epsilon = sensitivity_epsilon
         self.sensitivity_m = sensitivity_m
         self.variance_threshold = variance_threshold
+        self.whiten_rcond = whiten_rcond
         self.sample_size = sample_size
         self.random_seed = random_seed
 
@@ -94,10 +107,8 @@ class Spectralyte:
         # lands in the same space as the indexed corpus.
         self._audited: Optional[np.ndarray] = None
 
-        # Fitted transform parameters, populated lazily by _fit_transforms().
-        self._pca_mean: Optional[np.ndarray] = None
-        self._whitening_matrix: Optional[np.ndarray] = None
-        self._right_singular_vectors: Optional[np.ndarray] = None
+        # Fitted transform, populated lazily by fitted_transform().
+        self._fit: Optional[_transform.FittedTransform] = None
 
     # ── Run ────────────────────────────────────────────────────────────────────
 
@@ -240,9 +251,7 @@ class Spectralyte:
         # A new audit means a new reference space; discard the fit derived
         # from the previous one rather than silently reusing it.
         self._audited = E
-        self._pca_mean = None
-        self._whitening_matrix = None
-        self._right_singular_vectors = None
+        self._fit = None
 
         if verbose:
             print()
@@ -312,116 +321,42 @@ class Spectralyte:
                 "The audit results are needed to compute the transform."
             )
 
-        if strategy not in ("whiten", "abtt", "pca_reduce"):
-            raise ValueError(
-                f"Unknown strategy '{strategy}'. "
-                f"Choose one of: 'whiten', 'abtt', 'pca_reduce'."
-            )
-
         X = self._audited if embeddings is None else embeddings
-        X = np.asarray(X)
 
-        # A single query arrives as (d,); accept it and answer in kind.
-        was_1d = X.ndim == 1
-        if was_1d:
-            X = X.reshape(1, -1)
-        if X.ndim != 2:
-            raise ValueError(
-                f"embeddings must be 1D (d,) or 2D (n, d), got shape {X.shape}"
-            )
-
-        expected = self._audited.shape[1]
-        if X.shape[1] != expected:
-            raise ValueError(
-                f"embeddings have {X.shape[1]} dimensions but the audit was "
-                f"run on {expected}-dimensional vectors. A transform fitted on "
-                f"one space cannot be applied to another."
-            )
-
-        self._fit_transforms()
-
-        if strategy == "whiten":
-            out = self._apply_whiten(X)
-        elif strategy == "abtt":
-            out = self._apply_abtt(X, k=abtt_k)
-        else:
-            out = self._apply_pca_reduce(X)
-
-        return out[0] if was_1d else out
-
-    # ── Fitting ────────────────────────────────────────────────────────────────
-
-    def _fit_transforms(self) -> None:
-        """
-        Compute and cache the transform parameters from the audited matrix.
-
-        Fitted lazily — an audit that never transforms should not pay for an
-        SVD. All three strategies derive from the same centered decomposition,
-        so one pass serves them all, and ABTT can answer any abtt_k from the
-        stored right singular vectors without refitting.
-        """
-        if self._whitening_matrix is not None:
-            return
-
-        V = self._audited - self._audited.mean(axis=0)
-        self._pca_mean = self._audited.mean(axis=0)
-
-        # Whitening: C^(-1/2) via eigendecomposition of the covariance.
-        C = (V.T @ V) / V.shape[0]
-        eigenvalues, eigenvectors = np.linalg.eigh(C)
-        eigenvalues = np.clip(eigenvalues, 1e-10, None)   # numerical stability
-        self._whitening_matrix = (
-            eigenvectors @ np.diag(eigenvalues ** -0.5) @ eigenvectors.T
+        return self.fitted_transform().apply(
+            X, strategy=strategy, abtt_k=abtt_k
         )
 
-        # Right singular vectors serve both ABTT and pca_reduce.
-        _, _, Vt = np.linalg.svd(V, full_matrices=False)
-        self._right_singular_vectors = Vt
-
-    @staticmethod
-    def _l2_normalize(X: np.ndarray) -> np.ndarray:
-        """L2-normalize rows, leaving zero rows untouched."""
-        norms = np.linalg.norm(X, axis=1, keepdims=True)
-        norms = np.where(norms == 0, 1.0, norms)
-        return X / norms
-
-    # ── Applying ───────────────────────────────────────────────────────────────
-
-    def _apply_whiten(self, X: np.ndarray) -> np.ndarray:
+    def fitted_transform(self) -> "_transform.FittedTransform":
         """
-        Whitening — makes the corpus covariance the identity.
+        The transform fitted on the audited corpus.
 
-        Centers by the corpus mean and applies the fitted C^(-1/2), so the
-        mapping is identical for one query and for the whole index.
+        Fitted lazily and cached, so an audit that never transforms pays no
+        decomposition. Persist it with ``.save(path)`` to transform queries
+        from another process — the parameters have to outlive this instance
+        for a transformed index to stay queryable.
+
+        Raises
+        ------
+        RuntimeError
+            If run() has not been called.
+
+        Example
+        -------
+        >>> audit.run()
+        >>> audit.fitted_transform().save("spectralyte_fit.npz")
         """
-        return self._l2_normalize((X - self._pca_mean) @ self._whitening_matrix)
-
-    def _apply_abtt(self, X: np.ndarray, k: int = 3) -> np.ndarray:
-        """
-        All-but-the-Top — removes the corpus's dominant directions.
-
-        The top k principal components capture corpus-level bias rather than
-        document-specific semantics. Removing them reveals the variation
-        underneath. Projection acts on the feature space, so it uses the right
-        singular vectors.
-        """
-        if k < 0:
-            raise ValueError(f"abtt_k must be non-negative, got {k}")
-
-        W_k = self._right_singular_vectors[:k, :].T   # (d, k)
-        centered = X - self._pca_mean
-        return self._l2_normalize(centered - centered @ W_k @ W_k.T)
-
-    def _apply_pca_reduce(self, X: np.ndarray) -> np.ndarray:
-        """
-        PCA reduction onto the measured effective dimensionality.
-
-        Projects onto the corpus's top components, dropping the dimensions the
-        audit found to carry noise rather than signal.
-        """
-        k = self._report.dimensionality.effective_dims
-        components = self._right_singular_vectors[:k, :]   # (k, d)
-        return (X - self._pca_mean) @ components.T
+        if self._report is None:
+            raise RuntimeError(
+                "Call audit.run() before requesting the fitted transform."
+            )
+        if self._fit is None:
+            self._fit = _transform.fit(
+                self._audited,
+                effective_dims=self._report.dimensionality.effective_dims,
+                whiten_rcond=self.whiten_rcond,
+            )
+        return self._fit
 
     # ── Router ────────────────────────────────────────────────────────────────
 

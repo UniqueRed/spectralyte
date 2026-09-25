@@ -145,9 +145,21 @@ index_vectors = audit.transform(strategy="whiten")   # defaults to the corpus
 query_vectors = audit.transform(query_embedding, strategy="whiten")
 ```
 
-The fit lives on the `Spectralyte` instance, so keep it (or re-run the audit on
-the same corpus) for as long as the index is in use. Re-running `run()` on a
-different matrix establishes a new reference space and refits.
+The fit lives on the `Spectralyte` instance. To use it from another process —
+a serving loop, a different machine — save it:
+
+```python
+audit.fitted_transform().save("spectralyte_fit.npz")
+
+# ... later, wherever queries are embedded ...
+from spectralyte.core.transform import FittedTransform
+fit = FittedTransform.load("spectralyte_fit.npz")
+query_vectors = fit.apply(query_embedding, strategy="whiten")
+```
+
+The file is plain arrays (`numpy.savez`, no pickle), so loading one cannot
+execute code. Re-running `run()` on a different matrix establishes a new
+reference space and refits.
 
 > **Whitening is not always the right fix.** It rescales every direction to
 > equal variance, which on an ill-conditioned space amplifies near-null
@@ -264,6 +276,14 @@ spectralyte transform my_embeddings.npy --strategy abtt --output fixed.npy
 
 # Reduce to effective dimensionality
 spectralyte transform my_embeddings.npy --strategy pca_reduce --output reduced.npy
+
+# Keep the fitted transform so queries can reach the same space
+spectralyte transform corpus.npy --strategy whiten \
+    --output fixed.npy --save-fit fit.npz
+
+# At query time — apply the saved fit, never refit
+spectralyte transform queries.npy --strategy whiten \
+    --apply-fit fit.npz --output queries_fixed.npy
 ```
 
 ### JSON output

@@ -531,3 +531,101 @@ def test_parser_transform_func():
         ["transform", "foo.npy", "--strategy", "whiten", "--output", "out.npy"]
     )
     assert args.func is cmd_transform
+
+
+# ── Fitted-transform persistence (--save-fit / --apply-fit) ────────────────────
+#
+# Without these, `spectralyte transform` produced an index that could not be
+# queried correctly: the fitted mapping died with the process, so incoming
+# queries had no way to reach the same space as the corpus.
+
+def test_transform_save_fit_creates_file(npy_file, tmp_path):
+    """--save-fit writes the fitted transform alongside the vectors."""
+    out, fit = str(tmp_path / "c.npy"), str(tmp_path / "fit.npz")
+    result = _run(["transform", npy_file, "--strategy", "whiten",
+                   "--output", out, "--save-fit", fit])
+    assert result.returncode == 0
+    assert os.path.exists(fit)
+    assert "Saved fitted transform" in result.stderr
+
+
+def test_transform_warns_when_fit_is_not_saved(npy_file, tmp_path):
+    """
+    Transforming an index without keeping the fit is a footgun; the command
+    must say so rather than exiting silently successful.
+    """
+    out = str(tmp_path / "c.npy")
+    result = _run(["transform", npy_file, "--strategy", "whiten", "--output", out])
+    assert result.returncode == 0
+    assert "--save-fit" in result.stderr
+    assert "queries must go through this same transform" in result.stderr
+
+
+def test_transform_no_warning_when_fit_is_saved(npy_file, tmp_path):
+    """The nudge is noise once the fit is being kept."""
+    out, fit = str(tmp_path / "c.npy"), str(tmp_path / "fit.npz")
+    result = _run(["transform", npy_file, "--strategy", "whiten",
+                   "--output", out, "--save-fit", fit])
+    assert "queries must go through this same transform" not in result.stderr
+
+
+def test_apply_fit_reproduces_the_original_mapping(npy_file, tmp_path):
+    """
+    The point of persistence: vectors put through a saved fit must land
+    exactly where they land when transformed in the fitting process.
+    """
+    corpus_out, fit = str(tmp_path / "c.npy"), str(tmp_path / "fit.npz")
+    _run(["transform", npy_file, "--strategy", "whiten",
+          "--output", corpus_out, "--save-fit", fit])
+
+    reapplied = str(tmp_path / "again.npy")
+    result = _run(["transform", npy_file, "--strategy", "whiten",
+                   "--apply-fit", fit, "--output", reapplied])
+    assert result.returncode == 0
+
+    assert np.allclose(np.load(corpus_out), np.load(reapplied), atol=1e-6)
+
+
+def test_apply_fit_does_not_refit(npy_file, tmp_path):
+    """
+    A saved fit must be applied as-is. Transforming a slice through it has to
+    match that slice of the full corpus — if --apply-fit refit on the input,
+    the two would differ.
+    """
+    corpus_out, fit = str(tmp_path / "c.npy"), str(tmp_path / "fit.npz")
+    _run(["transform", npy_file, "--strategy", "whiten",
+          "--output", corpus_out, "--save-fit", fit])
+
+    full = np.load(npy_file)
+    slice_path = str(tmp_path / "slice.npy")
+    np.save(slice_path, full[:5])
+
+    slice_out = str(tmp_path / "slice_fixed.npy")
+    _run(["transform", slice_path, "--strategy", "whiten",
+          "--apply-fit", fit, "--output", slice_out])
+
+    assert np.allclose(np.load(slice_out), np.load(corpus_out)[:5], atol=1e-6)
+
+
+def test_apply_fit_rejects_mismatched_width(npy_file, tmp_path):
+    """A fit from one space must not be applied to another."""
+    fit = str(tmp_path / "fit.npz")
+    _run(["transform", npy_file, "--strategy", "whiten",
+          "--output", str(tmp_path / "c.npy"), "--save-fit", fit])
+
+    wrong = str(tmp_path / "wrong.npy")
+    np.save(wrong, np.random.RandomState(0).randn(20, 999))
+
+    result = _run(["transform", wrong, "--strategy", "whiten",
+                   "--apply-fit", fit, "--output", str(tmp_path / "o.npy")])
+    assert result.returncode == 1
+    assert "dimensions" in result.stderr
+
+
+def test_apply_fit_missing_file_exits_1(npy_file, tmp_path):
+    """A missing fit file is an error, not a silent refit."""
+    result = _run(["transform", npy_file, "--strategy", "whiten",
+                   "--apply-fit", str(tmp_path / "nope.npz"),
+                   "--output", str(tmp_path / "o.npy")])
+    assert result.returncode == 1
+    assert "Error loading transform" in result.stderr

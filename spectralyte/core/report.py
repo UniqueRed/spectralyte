@@ -109,6 +109,23 @@ class AuditReport:
         )
 
     @property
+    def condition_number(self) -> float:
+        """
+        Ratio of largest to smallest variance across the embedding dimensions.
+
+        Derived from the dimensionality metric's spectrum, so it costs
+        nothing extra. High values mean the space is nearly degenerate in
+        some directions, which is what makes whitening dangerous there:
+        it rescales every direction to equal variance, amplifying the
+        near-null ones and the noise they carry.
+        """
+        evr = self.dimensionality.explained_variance_ratio
+        smallest = float(evr.min())
+        if smallest <= 0:
+            return float("inf")
+        return float(evr.max()) / smallest
+
+    @property
     def needs_transform(self) -> bool:
         """
         True if anisotropy or dimensionality issues detected.
@@ -422,25 +439,45 @@ class AuditReport:
         """
         if metric == "anisotropy":
             r = self.anisotropy
-            return (
-                f"High Anisotropy (score={r.score:.3f})",
-                [
-                    "Root cause: Embedding vectors cluster along a few directions.",
-                    "Cosine similarity loses discriminative power.",
-                    "Fix: Apply whitening or ABTT transform to your embeddings.",
+            ill_conditioned = self.condition_number > 1e4
+            strategy = "abtt" if ill_conditioned else "whiten"
+
+            body = [
+                "Root cause: Embedding vectors cluster along a few directions.",
+                "Cosine similarity loses discriminative power.",
+            ]
+
+            if ill_conditioned:
+                body += [
                     "",
-                    "  # Fix anisotropy — no re-embedding required",
-                    "  from spectralyte import Spectralyte",
-                    "  audit = Spectralyte(embeddings)",
-                    "  audit.run()",
-                    "  fixed_embeddings = audit.transform(strategy='whiten')",
-                    "  # Re-index fixed_embeddings in your vector database",
-                    "",
-                    "  # At query time, send the query through the same transform,",
-                    "  # or it will not land in the same space as the index:",
-                    "  fixed_query = audit.transform(query_embedding, strategy='whiten')",
-                ],
-            )
+                    f"Recommending ABTT, not whitening: this spectrum's condition "
+                    f"number is {self.condition_number:.1e}.",
+                    "Whitening rescales every direction to equal variance, so on a",
+                    "near-degenerate space it amplifies the weakest directions and the",
+                    "noise they carry — which can make retrieval worse than doing",
+                    "nothing. ABTT only removes the dominant directions and is safe here.",
+                    "If you do want whitening, damp it with Spectralyte(..., "
+                    "whiten_rcond=0.01)",
+                    "and measure retrieval before shipping.",
+                ]
+            else:
+                body += ["Fix: Apply whitening or ABTT transform to your embeddings."]
+
+            body += [
+                "",
+                "  # Fix anisotropy — no re-embedding required",
+                "  from spectralyte import Spectralyte",
+                "  audit = Spectralyte(embeddings)",
+                "  audit.run()",
+                f"  fixed_embeddings = audit.transform(strategy='{strategy}')",
+                "  # Re-index fixed_embeddings in your vector database",
+                "",
+                "  # At query time, send the query through the same transform,",
+                "  # or it will not land in the same space as the index:",
+                f"  fixed_query = audit.transform(query_embedding, strategy='{strategy}')",
+            ]
+
+            return (f"High Anisotropy (score={r.score:.3f})", body)
 
         if metric == "dimensionality":
             r = self.dimensionality

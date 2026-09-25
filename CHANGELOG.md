@@ -7,7 +7,31 @@
   `version` subcommands. `audit --json` emits the same schema as
   `report.export()` on clean stdout, so it composes with `jq` and CI gates.
 
+### Added
+- `spectralyte.core.transform.FittedTransform`, the fitted parameters as an
+  object that outlives the auditor, with `save()` / `load()`. Stored as plain
+  arrays via `numpy.savez` — no pickle, so loading a transform produced
+  elsewhere cannot execute code.
+- `spectralyte transform --save-fit FIT.NPZ` and `--apply-fit FIT.NPZ`. Without
+  these the CLI produced an index nobody could query correctly: the fitted
+  mapping died with the process, leaving no way to put a query into the
+  corpus's space. Transforming without `--save-fit` now says so on stderr.
+- `AuditReport.condition_number`, the ratio of largest to smallest variance
+  across dimensions, derived from the dimensionality spectrum at no extra cost.
+
 ### Changed
+- **Whitening now floors covariance eigenvalues relative to the largest**
+  (`whiten_rcond`, default 0.01) rather than at an absolute `1e-10`. Whitening
+  scales each direction by `lambda^-1/2`, so an absolute floor let a near-null
+  direction be amplified roughly 1e5x — drowning the signal in noise. Measured
+  on a corpus with condition number 2.6e6, recall@1 went from 1.00 unmodified
+  to 0.00 whitened; with the relative floor it holds at 1.00. The floor is
+  inert on a well-conditioned spectrum, where nothing sits below it.
+- **`fix_plan()` no longer recommends whitening for an ill-conditioned space.**
+  Anisotropy and a fast-decaying spectrum co-occur in real embedding models, so
+  the previous advice was most dangerous exactly where it was most likely to be
+  followed. Above a condition number of 1e4 the plan recommends ABTT, explains
+  why, and points at `whiten_rcond` for anyone who still wants whitening.
 - **`transform()` now fits once and applies many times.** Every strategy
   previously recomputed its transform from whatever array it was handed, so
   there was no way to put a query into the same space as the index — the
@@ -69,13 +93,16 @@
   zero-byte placeholders that nothing imported).
 
 ### Internal
-- 478 tests passing across all modules, including regression coverage for the
+- 500 tests passing across all modules, including regression coverage for the
   grading fix above.
 - Dedicated property tests for the three correction transforms
   (`tests/test_transforms/`), covering the mathematics rather than just
   shapes: whitening flattens the covariance spectrum, ABTT genuinely projects
   out the top-k principal directions, and `pca_reduce` returns decorrelated
   components.
+- Tests for the whitening floor (inert when well-conditioned, protective when
+  not, and bounding the amplification), for conditioning-aware remediation, and
+  for fit persistence including a check that the format stays pickle-free.
 - Contract tests for the fit/apply split: a lone query must match its row in
   the transformed corpus, output must not depend on batch composition, and a
   stale fit must not survive a new audit. Mutation testing confirms they fail
